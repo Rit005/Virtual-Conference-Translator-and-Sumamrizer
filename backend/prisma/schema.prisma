@@ -1,0 +1,112 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+
+
+model User {
+  id                String   @id @default(cuid())
+  name              String
+  email             String   @unique
+  password          String?
+  role              String   @default("VIEWER") // VIEWER, MODERATOR, HOST
+  language          String   @default("en")
+  avatar            String?
+  provider          String   @default("LOCAL") // LOCAL, GOOGLE, GITHUB
+  googleId          String?  @unique
+  githubId          String?  @unique
+  isVerified        Boolean  @default(false)
+  verificationToken String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  hostedSessions   Session[]      @relation("HostSessions")
+  messages         Message[]
+  sessionParticipants SessionParticipant[]
+
+  @@map("users")
+}
+
+model Session {
+  id          String        @id @default(cuid())
+  title       String
+  description String?
+  hostId      String
+  isLive      Boolean       @default(false)
+  status      String        @default("CREATED")
+  language    String        @default("en")
+  maxUsers    Int           @default(100)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  host          User                  @relation("HostSessions", fields: [hostId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  captions      Caption[]
+  summaries     Summary[]
+  participants  SessionParticipant[]
+
+  @@map("sessions")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  sessionId String
+  userId    String
+  text      String
+  timestamp DateTime @default(now())
+
+  // Relations
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model Caption {
+  id        String   @id @default(cuid())
+  sessionId String
+  text      String
+  language  String   @default("en")
+  timestamp DateTime @default(now())
+
+  // Relations
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("captions")
+}
+
+model Summary {
+  id        String   @id @default(cuid())
+  sessionId String
+  content   String
+  createdAt DateTime @default(now())
+
+  // Relations
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("summaries")
+}
+
+model SessionParticipant {
+  id        String   @id @default(cuid())
+  sessionId String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  // Relations
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@map("session_participants")
+}
