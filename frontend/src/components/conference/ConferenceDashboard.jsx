@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../hooks/useTheme.js';
-import { useWebSocket } from '../../hooks/useWebSocket.js';
+import { useWebSocket } from '../../contexts/WebSocketContext.jsx';
 import { useAuth } from '../../contexts/AuthContext.jsx';
 import { useAudioStreaming } from '../../hooks/useAudioStreaming.js';
 import ConferenceService from '../../services/conferenceService.js';
-import CaptionPanel from './CaptionPanel.jsx';
+import LiveCaptions from './LiveCaptions.jsx';
 import ChatPanel from './ChatPanel.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
 import { CONFERENCE_CONSTANTS } from '../../utils/constants.js';
@@ -235,7 +235,7 @@ const ConferenceDashboard = () => {
       id: 'captions',
       name: t('liveCaptions'),
       icon: SpeakerWaveIcon,
-      component: CaptionPanel
+      component: LiveCaptions
     },
     {
       id: 'chat',
@@ -251,7 +251,7 @@ const ConferenceDashboard = () => {
     }
   ];
 
-  const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component || CaptionPanel;
+  const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component || LiveCaptions;
 
   return (
     <div className={`

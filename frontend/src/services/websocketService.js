@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { WS_BASE_URL } from '../utils/constants.js';
+import { WS_BASE_URL, CONFERENCE_CONSTANTS } from '../utils/constants.js';
 
 class WebSocketService {
   constructor() {
@@ -8,6 +8,11 @@ class WebSocketService {
     this.listeners = new Map();
     this.currentSessionId = null;
     this.currentUserId = null;
+    
+    // Latency tracking for live captions
+    this.captionLatencies = new Map();
+    this.averageLatency = 0;
+    this.lastCaptionTime = null;
   }
 
   // Connect to WebSocket server
@@ -66,10 +71,31 @@ class WebSocketService {
         this.emit('sessionLeft', data);
       });
 
-      // Handle live captions
+      // Handle live captions with latency tracking
       this.socket.on('caption:update', (caption) => {
         console.log('🎬 New live caption:', caption);
-        this.emit('liveCaption', caption);
+        
+        // Calculate latency if timestamp is provided
+        const currentTime = Date.now();
+        const captionTime = caption.timestamp || currentTime;
+        const latency = currentTime - captionTime;
+        
+        // Track latency for this caption
+        if (caption.id) {
+          this.captionLatencies.set(caption.id, latency);
+          this.updateAverageLatency();
+        }
+        
+        // Add latency info to caption object
+        const captionWithLatency = {
+          ...caption,
+          latency,
+          latencyStatus: this.getLatencyStatus(latency),
+          receivedAt: currentTime
+        };
+        
+        this.emit('liveCaption', captionWithLatency);
+        this.lastCaptionTime = currentTime;
       });
 
       this.socket.on('live_captions_started', (data) => {
@@ -359,6 +385,67 @@ class WebSocketService {
     }
   }
 
+  // Get latency status based on threshold
+  getLatencyStatus(latency) {
+    const thresholds = CONFERENCE_CONSTANTS.LATENCY_STATUS;
+    
+    if (latency < CONFERENCE_CONSTANTS.EXCELLENT_LATENCY_MS) {
+      return thresholds.EXCELLENT;
+    } else if (latency < CONFERENCE_CONSTANTS.GOOD_LATENCY_MS) {
+      return thresholds.GOOD;
+    } else if (latency < CONFERENCE_CONSTANTS.TARGET_LATENCY_MS) {
+      return thresholds.NORMAL;
+    } else if (latency < 5000) {
+      return thresholds.POOR;
+    } else {
+      return thresholds.BAD;
+    }
+  }
+
+  // Update average latency calculation
+  updateAverageLatency() {
+    if (this.captionLatencies.size === 0) return;
+    
+    const latencies = Array.from(this.captionLatencies.values());
+    const sum = latencies.reduce((acc, latency) => acc + latency, 0);
+    this.averageLatency = Math.round(sum / latencies.length);
+    
+    // Clean up old latency entries (keep only last 100)
+    if (this.captionLatencies.size > 100) {
+      const entries = Array.from(this.captionLatencies.entries());
+      const recentEntries = entries.slice(-100);
+      this.captionLatencies.clear();
+      recentEntries.forEach(([id, latency]) => {
+        this.captionLatencies.set(id, latency);
+      });
+    }
+  }
+
+  // Get current latency metrics
+  getLatencyMetrics() {
+    return {
+      average: this.averageLatency,
+      lastCaption: this.lastCaptionTime ? Date.now() - this.lastCaptionTime : null,
+      status: this.getLatencyStatus(this.averageLatency),
+      totalTracked: this.captionLatencies.size
+    };
+  }
+
+  // Get latency color for UI indicators
+  getLatencyColor(latency) {
+    if (latency < CONFERENCE_CONSTANTS.EXCELLENT_LATENCY_MS) {
+      return 'text-green-500'; // Excellent
+    } else if (latency < CONFERENCE_CONSTANTS.GOOD_LATENCY_MS) {
+      return 'text-blue-500'; // Good
+    } else if (latency < CONFERENCE_CONSTANTS.TARGET_LATENCY_MS) {
+      return 'text-yellow-500'; // Normal
+    } else if (latency < 5000) {
+      return 'text-orange-500'; // Poor
+    } else {
+      return 'text-red-500'; // Bad
+    }
+  }
+
   // Clean up intervals and listeners
   cleanup() {
     // Clear any existing intervals
@@ -371,6 +458,11 @@ class WebSocketService {
       clearInterval(this.chatInterval);
       this.chatInterval = null;
     }
+
+    // Clear latency tracking
+    this.captionLatencies.clear();
+    this.averageLatency = 0;
+    this.lastCaptionTime = null;
 
     // Clear all listeners
     this.listeners.clear();

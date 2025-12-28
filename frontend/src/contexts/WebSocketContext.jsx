@@ -216,14 +216,58 @@ const WebSocketProvider = ({ children }) => {
     setIsConnected(status.connected);
   }, []);
 
-  // Handle new captions
+  // Handle new captions with latency tracking and translation support
   const handleCaption = useCallback((caption) => {
+    console.log('🎬 Processing new caption:', caption);
+    
     setCaptions(prev => {
-      const newCaptions = [...prev, caption];
-      // Keep only the last MAX_CAPTION_HISTORY captions
+      // Create enhanced caption object
+      const enhancedCaption = {
+        id: caption.id || `caption_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        text: caption.text || '',
+        originalText: caption.originalText || caption.text || '',
+        translatedText: caption.translatedText || null,
+        sourceLanguage: caption.sourceLanguage || 'en',
+        targetLanguage: caption.targetLanguage || selectedLanguage,
+        speaker: caption.speaker || 'Speaker',
+        timestamp: caption.timestamp || Date.now(),
+        receivedAt: caption.receivedAt || Date.now(),
+        latency: caption.latency || 0,
+        latencyStatus: caption.latencyStatus || 'unknown',
+        isTranslation: caption.isTranslation || false,
+        confidence: caption.confidence || null,
+        // Create a composite key for pairing original + translation
+        pairId: caption.pairId || caption.originalText ? `pair_${Date.now()}` : null
+      };
+
+      // If this is a translation, try to pair it with original text
+      if (enhancedCaption.isTranslation && enhancedCaption.originalText) {
+        const newCaptions = [...prev];
+        
+        // Find matching original caption (same text and timestamp)
+        const originalIndex = newCaptions.findIndex(c => 
+          !c.isTranslation && 
+          c.originalText === enhancedCaption.originalText &&
+          Math.abs(c.timestamp - enhancedCaption.timestamp) < 5000 // within 5 seconds
+        );
+        
+        if (originalIndex >= 0) {
+          // Update the original caption with translation
+          newCaptions[originalIndex] = {
+            ...newCaptions[originalIndex],
+            translatedText: enhancedCaption.text,
+            targetLanguage: enhancedCaption.targetLanguage
+          };
+          
+          return newCaptions.slice(-CONFERENCE_CONSTANTS.MAX_CAPTION_HISTORY);
+        }
+      }
+      
+      // For regular captions or unmatched translations, just add to the list
+      const newCaptions = [...prev, enhancedCaption];
       return newCaptions.slice(-CONFERENCE_CONSTANTS.MAX_CAPTION_HISTORY);
     });
-  }, []);
+  }, [selectedLanguage]);
 
   // Handle chat messages
   const handleChatMessage = useCallback((message) => {
@@ -243,14 +287,6 @@ const WebSocketProvider = ({ children }) => {
   const handleError = useCallback((error) => {
     console.error('WebSocket error:', error);
     toast.error('Connection error occurred');
-  }, []);
-
-  // Handle live captions
-  const handleLiveCaption = useCallback((caption) => {
-    setCaptions(prev => {
-      const newCaptions = [...prev, caption];
-      return newCaptions.slice(-CONFERENCE_CONSTANTS.MAX_CAPTION_HISTORY);
-    });
   }, []);
 
   // Handle translated captions
@@ -328,8 +364,8 @@ const WebSocketProvider = ({ children }) => {
     // Connection status
     websocketService.on('connectionStatus', handleConnectionStatus);
     
-    // Live caption events
-    websocketService.on('caption:update', handleLiveCaption);
+    // Live caption events - fix event name mapping
+    websocketService.on('liveCaption', handleCaption);
     websocketService.on('caption:translated', handleTranslatedCaption);
     websocketService.on('liveCaptionsStarted', handleLiveCaptionsStarted);
     websocketService.on('liveCaptionsStopped', handleLiveCaptionsStopped);
@@ -361,7 +397,7 @@ const WebSocketProvider = ({ children }) => {
     // Cleanup
     return () => {
       websocketService.off('connectionStatus', handleConnectionStatus);
-      websocketService.off('caption:update', handleLiveCaption);
+      websocketService.off('liveCaption', handleCaption);
       websocketService.off('caption:translated', handleTranslatedCaption);
       websocketService.off('liveCaptionsStarted', handleLiveCaptionsStarted);
       websocketService.off('liveCaptionsStopped', handleLiveCaptionsStopped);

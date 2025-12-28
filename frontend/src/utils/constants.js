@@ -22,6 +22,33 @@ export const CONFERENCE_CONSTANTS = {
   CAPTION_UPDATE_INTERVAL: 2000, // 2 seconds
   MAX_CAPTION_HISTORY: 50,
   MAX_CHAT_MESSAGES: 100,
+  
+  // Live Caption Performance Constants
+  TARGET_LATENCY_MS: 3000, // <3s target latency
+  GOOD_LATENCY_MS: 2000,   // <2s good latency
+  EXCELLENT_LATENCY_MS: 1000, // <1s excellent latency
+  
+  // Real-time Caption Configuration
+  AUTO_SCROLL_DEBOUNCE_MS: 100,
+  MAX_CAPTIONS_PER_SECOND: 10,
+  CAPTION_ANIMATION_DURATION: 200,
+  CAPTION_FADE_IN_DELAY: 50,
+  
+  // Accessibility Constants
+  HIGH_CONTRAST_MODE: 'high-contrast',
+  REDUCED_MOTION: 'reduced-motion',
+  CAPTION_FONT_SIZE_LARGE: 18,
+  CAPTION_FONT_SIZE_NORMAL: 16,
+  CAPTION_FONT_SIZE_SMALL: 14,
+  
+  // Status Indicators
+  LATENCY_STATUS: {
+    EXCELLENT: 'excellent', // <1s
+    GOOD: 'good',           // 1-2s
+    NORMAL: 'normal',       // 2-3s
+    POOR: 'poor',           // 3-5s
+    BAD: 'bad'              // >5s
+  }
 };
 
 // UI Constants
