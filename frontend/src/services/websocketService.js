@@ -157,6 +157,17 @@ class WebSocketService {
         this.emit('participant_count_update', data);
       });
 
+      // Handle Q&A events
+      this.socket.on('message_updated', (data) => {
+        console.log('📝 Message updated:', data);
+        this.emit('message_updated', data);
+      });
+
+      this.socket.on('pinned_questions', (data) => {
+        console.log('📌 Pinned questions received:', data);
+        this.emit('pinned_questions', data);
+      });
+
       return this.socket;
     } catch (error) {
       console.error('❌ Failed to connect WebSocket:', error);
@@ -338,6 +349,67 @@ class WebSocketService {
       this.socket.emit('update_language_preference', {
         sessionId,
         language
+      });
+    }
+  }
+
+  // Mark message as question
+  markAsQuestion(messageId, questionCategory, sessionId) {
+    if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      console.log(`❓ Marking message as question: ${messageId}`);
+      this.socket.emit('mark_as_question', {
+        messageId,
+        questionCategory
+      });
+    }
+  }
+
+  // Unmark message as question
+  unmarkAsQuestion(messageId, sessionId) {
+    if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      console.log(`❓ Unmarking message as question: ${messageId}`);
+      this.socket.emit('unmark_as_question', {
+        messageId
+      });
+    }
+  }
+
+  // Pin question (moderator only)
+  pinQuestion(messageId, sessionId) {
+    if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      console.log(`📌 Pinning question: ${messageId}`);
+      this.socket.emit('pin_question', {
+        messageId
+      });
+    }
+  }
+
+  // Unpin question (moderator only)
+  unpinQuestion(messageId, sessionId) {
+    if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      console.log(`📌 Unpinning question: ${messageId}`);
+      this.socket.emit('unpin_question', {
+        messageId
+      });
+    }
+  }
+
+  // Get pinned questions
+  getPinnedQuestions(sessionId) {
+    if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      console.log(`📌 Getting pinned questions for session: ${sessionId}`);
+      this.socket.emit('get_pinned_questions', {
+        sessionId
+      });
+    }
+  }
+
+  // Like message
+  likeMessage(messageId, sessionId) {
+    if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      console.log(`❤️ Liking message: ${messageId}`);
+      this.socket.emit('like_message', {
+        messageId
       });
     }
   }

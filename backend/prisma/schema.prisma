@@ -29,9 +29,11 @@ model User {
   updatedAt         DateTime @updatedAt
 
   // Relations
-  hostedSessions   Session[]      @relation("HostSessions")
+  hostedSessions   Session[]            @relation("HostSessions")
   messages         Message[]
   sessionParticipants SessionParticipant[]
+  pinnedMessages   Message[]            @relation("PinnedBy")
+  messageLikes     MessageLike[]
 
   @@map("users")
 }
@@ -59,15 +61,25 @@ model Session {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  sessionId String
-  userId    String
-  text      String
-  timestamp DateTime @default(now())
+  id              String   @id @default(cuid())
+  sessionId       String
+  userId          String
+  text            String
+  timestamp       DateTime @default(now())
+  
+  // Q&A Features
+  isQuestion      Boolean  @default(false)
+  isPinned        Boolean  @default(false)
+  pinnedAt        DateTime?
+  pinnedById      String?
+  questionCategory String?
+  likes           Int      @default(0)
 
   // Relations
-  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session    Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pinnedBy   User?       @relation("PinnedBy", fields: [pinnedById], references: [id])
+  messageLikes MessageLike[]
 
   @@map("messages")
 }
@@ -109,4 +121,18 @@ model SessionParticipant {
 
   @@unique([sessionId, userId])
   @@map("session_participants")
+}
+
+model MessageLike {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  // Relations
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@map("message_likes")
 }

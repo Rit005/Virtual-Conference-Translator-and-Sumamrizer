@@ -24,6 +24,8 @@ const WebSocketProvider = ({ children }) => {
   const [currentSession, setCurrentSession] = useState(null);
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [participantsCount, setParticipantsCount] = useState(1);
+  const [pinnedQuestions, setPinnedQuestions] = useState([]);
+  const [userRole, setUserRole] = useState('VIEWER');
 
   // Disconnect from WebSocket (declared first to avoid hoisting issue)
   const disconnect = useCallback(() => {
@@ -359,6 +361,30 @@ const WebSocketProvider = ({ children }) => {
     }
   }, [currentSession]);
 
+  // Handle message updates (for Q&A features)
+  const handleMessageUpdated = useCallback((updatedMessage) => {
+    setChatMessages(prev => 
+      prev.map(msg => 
+        msg.id === updatedMessage.id ? { ...msg, ...updatedMessage } : msg
+      )
+    );
+  }, []);
+
+  // Handle pinned questions
+  const handlePinnedQuestions = useCallback((data) => {
+    console.log('Received pinned questions:', data);
+    if (data.sessionId === currentSession) {
+      setPinnedQuestions(data.questions || []);
+    }
+  }, [currentSession]);
+
+  // Handle user authentication updates
+  const handleAuthenticated = useCallback((data) => {
+    if (data.user) {
+      setUserRole(data.user.role || 'VIEWER');
+    }
+  }, []);
+
   // Setup event listeners
   useEffect(() => {
     // Connection status
@@ -391,6 +417,11 @@ const WebSocketProvider = ({ children }) => {
     // Participant count events
     websocketService.on('participant_count_update', handleParticipantCountUpdate);
     
+    // Q&A events
+    websocketService.on('message_updated', handleMessageUpdated);
+    websocketService.on('pinned_questions', handlePinnedQuestions);
+    websocketService.on('authenticated', handleAuthenticated);
+    
     // Error events
     websocketService.on('error', handleError);
 
@@ -410,11 +441,14 @@ const WebSocketProvider = ({ children }) => {
       websocketService.off('userStoppedTyping', handleUserStoppedTyping);
       websocketService.off('summaryUpdate', handleSummary);
       websocketService.off('participant_count_update', handleParticipantCountUpdate);
+      websocketService.off('message_updated', handleMessageUpdated);
+      websocketService.off('pinned_questions', handlePinnedQuestions);
+      websocketService.off('authenticated', handleAuthenticated);
       websocketService.off('error', handleError);
     };
   }, [
     handleConnectionStatus,
-    handleLiveCaption,
+    handleCaption,
     handleLiveCaptionsStarted,
     handleLiveCaptionsStopped,
     handleChatMessage,
@@ -425,7 +459,12 @@ const WebSocketProvider = ({ children }) => {
     handleUserTyping,
     handleUserStoppedTyping,
     handleSummary,
-    handleError
+    handleParticipantCountUpdate,
+    handleMessageUpdated,
+    handlePinnedQuestions,
+    handleAuthenticated,
+    handleError,
+    currentSession
   ]);
 
   // Clear captions
@@ -440,14 +479,97 @@ const WebSocketProvider = ({ children }) => {
 
   // Like a chat message
   const likeMessage = useCallback((messageId) => {
-    setChatMessages(prev => 
-      prev.map(msg => 
-        msg.id === messageId 
-          ? { ...msg, likes: (msg.likes || 0) + 1 }
-          : msg
-      )
-    );
-  }, []);
+    if (!currentSession || !user) {
+      toast.error('Not connected to conference');
+      return;
+    }
+
+    try {
+      websocketService.likeMessage(messageId, currentSession);
+    } catch (error) {
+      console.error('Failed to like message:', error);
+      toast.error('Failed to like message');
+    }
+  }, [currentSession, user]);
+
+  // Mark message as question
+  const markMessageAsQuestion = useCallback((messageId, questionCategory = null) => {
+    if (!currentSession || !user) {
+      toast.error('Not connected to conference');
+      return;
+    }
+
+    try {
+      websocketService.markAsQuestion(messageId, questionCategory, currentSession);
+      toast.success('Message marked as question');
+    } catch (error) {
+      console.error('Failed to mark message as question:', error);
+      toast.error('Failed to mark message as question');
+    }
+  }, [currentSession, user]);
+
+  // Unmark message as question
+  const unmarkMessageAsQuestion = useCallback((messageId) => {
+    if (!currentSession || !user) {
+      toast.error('Not connected to conference');
+      return;
+    }
+
+    try {
+      websocketService.unmarkAsQuestion(messageId, currentSession);
+      toast.success('Question unmarked');
+    } catch (error) {
+      console.error('Failed to unmark message as question:', error);
+      toast.error('Failed to unmark question');
+    }
+  }, [currentSession, user]);
+
+  // Pin question (moderator only)
+  const pinMessage = useCallback((messageId) => {
+    if (!currentSession || !user) {
+      toast.error('Not connected to conference');
+      return;
+    }
+
+    try {
+      websocketService.pinQuestion(messageId, currentSession);
+      toast.success('Question pinned');
+    } catch (error) {
+      console.error('Failed to pin question:', error);
+      toast.error('Failed to pin question');
+    }
+  }, [currentSession, user]);
+
+  // Unpin question (moderator only)
+  const unpinMessage = useCallback((messageId) => {
+    if (!currentSession || !user) {
+      toast.error('Not connected to conference');
+      return;
+    }
+
+    try {
+      websocketService.unpinQuestion(messageId, currentSession);
+      toast.success('Question unpinned');
+    } catch (error) {
+      console.error('Failed to unpin question:', error);
+      toast.error('Failed to unpin question');
+    }
+  }, [currentSession, user]);
+
+  // Get pinned questions
+  const getPinnedQuestions = useCallback(() => {
+    if (!currentSession || !user) {
+      toast.error('Not connected to conference');
+      return;
+    }
+
+    try {
+      websocketService.getPinnedQuestions(currentSession);
+    } catch (error) {
+      console.error('Failed to get pinned questions:', error);
+      toast.error('Failed to get pinned questions');
+    }
+  }, [currentSession, user]);
 
   const value = {
     // State
@@ -457,6 +579,8 @@ const WebSocketProvider = ({ children }) => {
     summary,
     currentSession,
     selectedLanguage,
+    pinnedQuestions,
+    userRole,
     
     // Actions
     connect,
@@ -474,6 +598,11 @@ const WebSocketProvider = ({ children }) => {
     clearCaptions,
     clearChatMessages,
     likeMessage,
+    markMessageAsQuestion,
+    unmarkMessageAsQuestion,
+    pinMessage,
+    unpinMessage,
+    getPinnedQuestions,
     setSelectedLanguage,
     
     // Computed values

@@ -396,7 +396,11 @@ class SocketHandler {
             id: message.id,
             text: message.text,
             timestamp: message.timestamp,
-            user: message.user
+            user: message.user,
+            isQuestion: message.isQuestion,
+            isPinned: message.isPinned,
+            questionCategory: message.questionCategory,
+            likes: message.likes
           });
 
           // Generate real-time summary update using summarization agent
@@ -428,6 +432,477 @@ class SocketHandler {
         } catch (error) {
           console.error('Chat message error:', error);
           socket.emit('error', { message: 'Failed to send message' });
+        }
+      });
+
+      // Handle marking messages as questions
+      socket.on('mark_as_question', async (data) => {
+        try {
+          const { messageId, questionCategory } = data;
+          
+          // Get the message to verify session authorization
+          const message = await prisma.message.findUnique({
+            where: { id: messageId },
+            include: {
+              user: {
+                select: { id: true, name: true }
+              }
+            }
+          });
+
+          if (!message) {
+            socket.emit('error', { message: 'Message not found' });
+            return;
+          }
+
+          // Verify user is in session
+          const sessionId = message.sessionId;
+          if (!this.sessionUsers.has(sessionId) || 
+              !this.sessionUsers.get(sessionId).has(socket.userId)) {
+            socket.emit('error', { message: 'Not authorized for this session' });
+            return;
+          }
+
+          // Update message to mark as question
+          const updatedMessage = await prisma.message.update({
+            where: { id: messageId },
+            data: {
+              isQuestion: true,
+              questionCategory: questionCategory || null
+            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatar: true
+                }
+              }
+            }
+          });
+
+          // Broadcast update to all users in session
+          this.io.to(sessionId).emit('message_updated', {
+            id: updatedMessage.id,
+            text: updatedMessage.text,
+            timestamp: updatedMessage.timestamp,
+            user: updatedMessage.user,
+            isQuestion: updatedMessage.isQuestion,
+            isPinned: updatedMessage.isPinned,
+            questionCategory: updatedMessage.questionCategory,
+            likes: updatedMessage.likes
+          });
+
+          console.log(`Message ${messageId} marked as question by user ${socket.userId}`);
+
+        } catch (error) {
+          console.error('Mark as question error:', error);
+          socket.emit('error', { message: 'Failed to mark message as question' });
+        }
+      });
+
+      // Handle unmarking messages as questions
+      socket.on('unmark_as_question', async (data) => {
+        try {
+          const { messageId } = data;
+          
+          // Get the message to verify session authorization
+          const message = await prisma.message.findUnique({
+            where: { id: messageId },
+            include: {
+              user: {
+                select: { id: true, name: true }
+              }
+            }
+          });
+
+          if (!message) {
+            socket.emit('error', { message: 'Message not found' });
+            return;
+          }
+
+          // Verify user is in session
+          const sessionId = message.sessionId;
+          if (!this.sessionUsers.has(sessionId) || 
+              !this.sessionUsers.get(sessionId).has(socket.userId)) {
+            socket.emit('error', { message: 'Not authorized for this session' });
+            return;
+          }
+
+          // If message is pinned, unpin it first
+          if (message.isPinned) {
+            await prisma.message.update({
+              where: { id: messageId },
+              data: {
+                isPinned: false,
+                pinnedAt: null,
+                pinnedById: null
+              }
+            });
+          }
+
+          // Update message to unmark as question
+          const updatedMessage = await prisma.message.update({
+            where: { id: messageId },
+            data: {
+              isQuestion: false,
+              questionCategory: null
+            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatar: true
+                }
+              }
+            }
+          });
+
+          // Broadcast update to all users in session
+          this.io.to(sessionId).emit('message_updated', {
+            id: updatedMessage.id,
+            text: updatedMessage.text,
+            timestamp: updatedMessage.timestamp,
+            user: updatedMessage.user,
+            isQuestion: updatedMessage.isQuestion,
+            isPinned: updatedMessage.isPinned,
+            questionCategory: updatedMessage.questionCategory,
+            likes: updatedMessage.likes
+          });
+
+          console.log(`Message ${messageId} unmarked as question by user ${socket.userId}`);
+
+        } catch (error) {
+          console.error('Unmark as question error:', error);
+          socket.emit('error', { message: 'Failed to unmark message as question' });
+        }
+      });
+
+      // Handle pinning questions (moderator only)
+      socket.on('pin_question', async (data) => {
+        try {
+          const { messageId } = data;
+          
+          // Get the message to verify session authorization
+          const message = await prisma.message.findUnique({
+            where: { id: messageId },
+            include: {
+              user: {
+                select: { id: true, name: true }
+              }
+            }
+          });
+
+          if (!message) {
+            socket.emit('error', { message: 'Message not found' });
+            return;
+          }
+
+          // Verify user is in session and has moderator/host role
+          const sessionId = message.sessionId;
+          if (!this.sessionUsers.has(sessionId) || 
+              !this.sessionUsers.get(sessionId).has(socket.userId)) {
+            socket.emit('error', { message: 'Not authorized for this session' });
+            return;
+          }
+
+          if (!['MODERATOR', 'HOST'].includes(socket.userRole)) {
+            socket.emit('error', { message: 'Only moderators can pin questions' });
+            return;
+          }
+
+          // Update message to pin it
+          const updatedMessage = await prisma.message.update({
+            where: { id: messageId },
+            data: {
+              isPinned: true,
+              pinnedAt: new Date(),
+              pinnedById: socket.userId
+            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatar: true
+                }
+              },
+              pinnedBy: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          });
+
+          // Broadcast update to all users in session
+          this.io.to(sessionId).emit('message_updated', {
+            id: updatedMessage.id,
+            text: updatedMessage.text,
+            timestamp: updatedMessage.timestamp,
+            user: updatedMessage.user,
+            isQuestion: updatedMessage.isQuestion,
+            isPinned: updatedMessage.isPinned,
+            pinnedAt: updatedMessage.pinnedAt,
+            pinnedBy: updatedMessage.pinnedBy,
+            questionCategory: updatedMessage.questionCategory,
+            likes: updatedMessage.likes
+          });
+
+          console.log(`Question ${messageId} pinned by moderator ${socket.userId}`);
+
+        } catch (error) {
+          console.error('Pin question error:', error);
+          socket.emit('error', { message: 'Failed to pin question' });
+        }
+      });
+
+      // Handle unpinning questions (moderator only)
+      socket.on('unpin_question', async (data) => {
+        try {
+          const { messageId } = data;
+          
+          // Get the message to verify session authorization
+          const message = await prisma.message.findUnique({
+            where: { id: messageId },
+            include: {
+              user: {
+                select: { id: true, name: true }
+              }
+            }
+          });
+
+          if (!message) {
+            socket.emit('error', { message: 'Message not found' });
+            return;
+          }
+
+          // Verify user is in session and has moderator/host role
+          const sessionId = message.sessionId;
+          if (!this.sessionUsers.has(sessionId) || 
+              !this.sessionUsers.get(sessionId).has(socket.userId)) {
+            socket.emit('error', { message: 'Not authorized for this session' });
+            return;
+          }
+
+          if (!['MODERATOR', 'HOST'].includes(socket.userRole)) {
+            socket.emit('error', { message: 'Only moderators can unpin questions' });
+            return;
+          }
+
+          // Update message to unpin it
+          const updatedMessage = await prisma.message.update({
+            where: { id: messageId },
+            data: {
+              isPinned: false,
+              pinnedAt: null,
+              pinnedById: null
+            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatar: true
+                }
+              }
+            }
+          });
+
+          // Broadcast update to all users in session
+          this.io.to(sessionId).emit('message_updated', {
+            id: updatedMessage.id,
+            text: updatedMessage.text,
+            timestamp: updatedMessage.timestamp,
+            user: updatedMessage.user,
+            isQuestion: updatedMessage.isQuestion,
+            isPinned: updatedMessage.isPinned,
+            pinnedAt: updatedMessage.pinnedAt,
+            pinnedBy: updatedMessage.pinnedBy,
+            questionCategory: updatedMessage.questionCategory,
+            likes: updatedMessage.likes
+          });
+
+          console.log(`Question ${messageId} unpinned by moderator ${socket.userId}`);
+
+        } catch (error) {
+          console.error('Unpin question error:', error);
+          socket.emit('error', { message: 'Failed to unpin question' });
+        }
+      });
+
+      // Handle getting pinned questions for session
+      socket.on('get_pinned_questions', async (data) => {
+        try {
+          const { sessionId } = data;
+          
+          // Verify user is in session
+          if (!this.sessionUsers.has(sessionId) || 
+              !this.sessionUsers.get(sessionId).has(socket.userId)) {
+            socket.emit('error', { message: 'Not authorized for this session' });
+            return;
+          }
+
+          // Get all pinned questions for this session
+          const pinnedQuestions = await prisma.message.findMany({
+            where: {
+              sessionId,
+              isPinned: true
+            },
+            orderBy: {
+              pinnedAt: 'desc'
+            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatar: true
+                }
+              },
+              pinnedBy: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          });
+
+          socket.emit('pinned_questions', {
+            sessionId,
+            questions: pinnedQuestions.map(q => ({
+              id: q.id,
+              text: q.text,
+              timestamp: q.timestamp,
+              user: q.user,
+              isQuestion: q.isQuestion,
+              isPinned: q.isPinned,
+              pinnedAt: q.pinnedAt,
+              pinnedBy: q.pinnedBy,
+              questionCategory: q.questionCategory,
+              likes: q.likes
+            }))
+          });
+
+        } catch (error) {
+          console.error('Get pinned questions error:', error);
+          socket.emit('error', { message: 'Failed to get pinned questions' });
+        }
+      });
+
+      // Handle liking messages
+      socket.on('like_message', async (data) => {
+        try {
+          const { messageId } = data;
+          
+          // Get the message to verify session authorization
+          const message = await prisma.message.findUnique({
+            where: { id: messageId },
+            include: {
+              user: {
+                select: { id: true, name: true }
+              }
+            }
+          });
+
+          if (!message) {
+            socket.emit('error', { message: 'Message not found' });
+            return;
+          }
+
+          // Verify user is in session
+          const sessionId = message.sessionId;
+          if (!this.sessionUsers.has(sessionId) || 
+              !this.sessionUsers.get(sessionId).has(socket.userId)) {
+            socket.emit('error', { message: 'Not authorized for this session' });
+            return;
+          }
+
+          // Check if user already liked this message
+          const existingLike = await prisma.messageLike.findUnique({
+            where: {
+              messageId_userId: {
+                messageId,
+                userId: socket.userId
+              }
+            }
+          });
+
+          let updatedMessage;
+
+          if (existingLike) {
+            // Unlike the message
+            await prisma.messageLike.delete({
+              where: {
+                messageId_userId: {
+                  messageId,
+                  userId: socket.userId
+                }
+              }
+            });
+
+            updatedMessage = await prisma.message.update({
+              where: { id: messageId },
+              data: {
+                likes: { decrement: 1 }
+              },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    avatar: true
+                  }
+                }
+              }
+            });
+
+          } else {
+            // Like the message
+            await prisma.messageLike.create({
+              data: {
+                messageId,
+                userId: socket.userId
+              }
+            });
+
+            updatedMessage = await prisma.message.update({
+              where: { id: messageId },
+              data: {
+                likes: { increment: 1 }
+              },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    avatar: true
+                  }
+                }
+              }
+            });
+          }
+
+          // Broadcast update to all users in session
+          this.io.to(sessionId).emit('message_updated', {
+            id: updatedMessage.id,
+            text: updatedMessage.text,
+            timestamp: updatedMessage.timestamp,
+            user: updatedMessage.user,
+            isQuestion: updatedMessage.isQuestion,
+            isPinned: updatedMessage.isPinned,
+            questionCategory: updatedMessage.questionCategory,
+            likes: updatedMessage.likes
+          });
+
+          console.log(`Message ${messageId} ${existingLike ? 'unliked' : 'liked'} by user ${socket.userId}`);
+
+        } catch (error) {
+          console.error('Like message error:', error);
+          socket.emit('error', { message: 'Failed to like message' });
         }
       });
 

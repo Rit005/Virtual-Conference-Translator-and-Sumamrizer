@@ -6,7 +6,7 @@ import { useAuth } from '../../contexts/AuthContext.jsx';
 import { useAudioStreaming } from '../../hooks/useAudioStreaming.js';
 import ConferenceService from '../../services/conferenceService.js';
 import LiveCaptions from './LiveCaptions.jsx';
-import ChatPanel from './ChatPanel.jsx';
+import ChatQAPanel from './ChatQAPanel.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
 import { CONFERENCE_CONSTANTS } from '../../utils/constants.js';
 import { 
@@ -241,7 +241,7 @@ const ConferenceDashboard = () => {
       id: 'chat',
       name: t('chatQA'),
       icon: ChatBubbleLeftRightIcon,
-      component: ChatPanel
+      component: ChatQAPanel
     },
     {
       id: 'summary',
