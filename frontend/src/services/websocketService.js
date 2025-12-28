@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 import { WS_BASE_URL, CONFERENCE_CONSTANTS } from '../utils/constants.js';
+import ReconnectionManager from '../utils/reconnectionManager.js';
 
 class WebSocketService {
   constructor() {
@@ -13,39 +14,194 @@ class WebSocketService {
     this.captionLatencies = new Map();
     this.averageLatency = 0;
     this.lastCaptionTime = null;
+    
+    // Production-grade error handling
+    this.reconnectionManager = new ReconnectionManager();
+    this.audioChunkRateLimiter = {
+      chunks: [],
+      maxChunks: 10, // Max 10 chunks per second
+      windowMs: 1000
+    };
+    this.messageRateLimiter = {
+      messages: [],
+      maxMessages: 50, // Max 50 messages per second
+      windowMs: 1000
+    };
+    this.errorLog = [];
+    this.maxErrorLogEntries = 100;
+    
+    // Setup reconnection manager callbacks
+    this.setupReconnectionHandlers();
   }
 
-  // Connect to WebSocket server
+  /**
+   * Setup reconnection manager event handlers
+   */
+  setupReconnectionHandlers() {
+    this.reconnectionManager.on('connected', (data) => {
+      console.log(`✅ WebSocket reconnected successfully`, {
+        connectionId: data.connectionId,
+        sessionId: data.sessionId,
+        userId: data.userId
+      });
+      this.isConnected = true;
+      this.emit('connectionStatus', { 
+        connected: true, 
+        connectionId: data.connectionId,
+        sessionId: data.sessionId 
+      });
+    });
+
+    this.reconnectionManager.on('disconnected', (data) => {
+      console.log(`❌ WebSocket disconnected`, {
+        connectionId: data.connectionId,
+        sessionId: data.sessionId,
+        userId: data.userId,
+        reason: data.reason
+      });
+      this.isConnected = false;
+      this.emit('connectionStatus', { 
+        connected: false, 
+        reason: data.reason,
+        sessionId: data.sessionId 
+      });
+    });
+
+    this.reconnectionManager.on('reconnecting', (data) => {
+      console.log(`🔄 WebSocket reconnecting (attempt ${data.attempt}/${data.maxAttempts})`, {
+        connectionId: data.connectionId,
+        delay: data.delay
+      });
+      this.emit('reconnecting', data);
+    });
+
+    this.reconnectionManager.on('reconnected', (data) => {
+      console.log(`✅ WebSocket reconnected after ${data.attempt} attempts`, {
+        connectionId: data.connectionId,
+        reconnectTime: data.reconnectTime
+      });
+      this.emit('reconnected', data);
+    });
+
+    this.reconnectionManager.on('reconnection_failed', (data) => {
+      console.warn(`⚠️ WebSocket reconnection attempt ${data.attempt} failed`, {
+        connectionId: data.connectionId,
+        error: data.error
+      });
+      this.emit('reconnection_failed', data);
+    });
+
+    this.reconnectionManager.on('reconnection_exhausted', (data) => {
+      console.error(`❌ WebSocket reconnection exhausted after ${data.totalAttempts} attempts`, {
+        connectionId: data.connectionId,
+        sessionId: data.sessionId
+      });
+      this.emit('reconnection_exhausted', data);
+    });
+  }
+
+  // Connect to WebSocket server with enhanced error handling
   connect(sessionId, userId) {
     try {
+      // Prevent duplicate connections
+      if (this.isConnected && this.currentSessionId === sessionId && this.currentUserId === userId) {
+        console.log(`⚠️ Already connected to session ${sessionId} as user ${userId}`);
+        return this.socket;
+      }
+
       console.log(`🔌 Connecting to WebSocket for session: ${sessionId}, user: ${userId}`);
       
       this.currentSessionId = sessionId;
       this.currentUserId = userId;
+
+      // Update reconnection manager with session context
+      this.reconnectionManager.updateConnectionState(false, { 
+        sessionId, 
+        userId, 
+        reason: 'connecting' 
+      });
+
+      // Disconnect existing socket if any
+      if (this.socket) {
+        this.socket.disconnect();
+        this.socket = null;
+      }
       
       this.socket = io(WS_BASE_URL, {
         transports: ['websocket', 'polling'],
-        withCredentials: true
+        withCredentials: true,
+        timeout: 10000, // 10 second connection timeout
+        reconnection: false // We handle reconnection manually
       });
 
       this.socket.on('connect', () => {
-        console.log('✅ WebSocket connected');
+        console.log(`✅ WebSocket connected for session ${sessionId}, user ${userId}`, {
+          connectionId: this.reconnectionManager.connectionId,
+          socketId: this.socket.id
+        });
+        
         this.isConnected = true;
-        this.emit('connectionStatus', { connected: true });
+        this.reconnectionManager.updateConnectionState(true, { 
+          sessionId, 
+          userId, 
+          socketId: this.socket.id 
+        });
         
         // Authenticate with JWT token
         this.authenticate();
       });
 
-      this.socket.on('disconnect', () => {
-        console.log('❌ WebSocket disconnected');
+      this.socket.on('disconnect', (reason) => {
+        console.log(`❌ WebSocket disconnected from session ${sessionId}`, {
+          connectionId: this.reconnectionManager.connectionId,
+          reason,
+          userId
+        });
+        
         this.isConnected = false;
-        this.emit('connectionStatus', { connected: false });
+        this.reconnectionManager.updateConnectionState(false, { 
+          sessionId, 
+          userId, 
+          reason 
+        });
+        
+        this.emit('connectionStatus', { 
+          connected: false, 
+          reason,
+          sessionId 
+        });
       });
 
       this.socket.on('error', (error) => {
-        console.error('❌ WebSocket error:', error);
-        this.emit('error', error);
+        this.logError('WebSocket connection error', {
+          error: error.message,
+          sessionId,
+          userId,
+          connectionId: this.reconnectionManager.connectionId
+        });
+        
+        this.emit('error', {
+          ...error,
+          sessionId,
+          userId,
+          context: 'websocket_connection'
+        });
+      });
+
+      this.socket.on('connect_error', (error) => {
+        this.logError('WebSocket connection failed', {
+          error: error.message,
+          sessionId,
+          userId,
+          connectionId: this.reconnectionManager.connectionId,
+          description: error.description
+        });
+        
+        this.reconnectionManager.updateConnectionState(false, { 
+          sessionId, 
+          userId, 
+          reason: `connect_error: ${error.message}` 
+        });
       });
 
       // Handle authentication events
@@ -204,19 +360,88 @@ class WebSocketService {
     }
   }
 
-  // Disconnect from WebSocket server
+  // Disconnect from WebSocket server with enhanced cleanup
   disconnect() {
-    if (this.socket) {
-      // Leave current session before disconnecting
+    console.log(`🔌 Disconnecting WebSocket for session ${this.currentSessionId}, user ${this.currentUserId}`, {
+      connectionId: this.reconnectionManager.connectionId
+    });
+    
+    // Update reconnection manager
+    this.reconnectionManager.updateConnectionState(false, { 
+      sessionId: this.currentSessionId, 
+      userId: this.currentUserId, 
+      reason: 'manual_disconnect' 
+    });
+
+    // Leave current session before disconnecting
+    if (this.currentSessionId && this.isConnected) {
       this.leaveSession();
-      
+    }
+    
+    if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
-      this.isConnected = false;
     }
+    
+    this.isConnected = false;
     this.listeners.clear();
     this.currentSessionId = null;
     this.currentUserId = null;
+    
+    // Clear rate limiting data
+    this.audioChunkRateLimiter.chunks = [];
+    this.messageRateLimiter.messages = [];
+    
+    console.log(`✅ WebSocket disconnected successfully`);
+  }
+
+  // Reconnect with existing session context
+  reconnect() {
+    if (this.currentSessionId && this.currentUserId) {
+      console.log(`🔄 Manually reconnecting to session ${this.currentSessionId}`, {
+        connectionId: this.reconnectionManager.connectionId
+      });
+      
+      return this.reconnectionManager.manualReconnect(() => {
+        return new Promise((resolve) => {
+          try {
+            this.connect(this.currentSessionId, this.currentUserId);
+            // Give it a moment to establish connection
+            setTimeout(() => {
+              resolve(this.isConnected);
+            }, 1000);
+          } catch (error) {
+            console.error('Manual reconnection failed:', error);
+            resolve(false);
+          }
+        });
+      });
+    } else {
+      console.warn('⚠️ Cannot reconnect: missing session or user context');
+      return Promise.resolve(false);
+    }
+  }
+
+  // Force reconnection with new session
+  forceReconnect(newSessionId, newUserId) {
+    console.log(`🔄 Force reconnecting to new session ${newSessionId}`, {
+      oldSessionId: this.currentSessionId,
+      oldUserId: this.currentUserId,
+      newSessionId,
+      newUserId,
+      connectionId: this.reconnectionManager.connectionId
+    });
+    
+    // Disconnect current connection
+    this.disconnect();
+    
+    // Reset reconnection manager
+    this.reconnectionManager.reset();
+    
+    // Connect to new session
+    setTimeout(() => {
+      this.connect(newSessionId, newUserId);
+    }, 100);
   }
 
   // Send message
@@ -414,12 +639,30 @@ class WebSocketService {
     }
   }
 
-  // Send audio chunk for transcription
+  // Send audio chunk for transcription with rate limiting
   sendAudioChunk(sessionId, audioData, language = 'en') {
+    // Check if we should send based on rate limiting
+    if (!this.checkAudioChunkRateLimit(sessionId)) {
+      console.warn(`⚠️ Audio chunk rate limit exceeded for session ${sessionId}`, {
+        sessionId,
+        userId: this.currentUserId,
+        connectionId: this.reconnectionManager.connectionId,
+        chunksSent: this.audioChunkRateLimiter.chunks.length,
+        maxChunks: this.audioChunkRateLimiter.maxChunks
+      });
+      return false;
+    }
+
     if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
+      const chunkId = `chunk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       console.log(`🎤 Sending audio chunk to session ${sessionId}:`, {
         dataSize: audioData?.length || audioData?.size,
         language,
+        chunkId,
+        sessionId,
+        userId: this.currentUserId,
+        connectionId: this.reconnectionManager.connectionId,
         timestamp: new Date().toISOString()
       });
       
@@ -428,11 +671,162 @@ class WebSocketService {
         audioData, 
         language,
         timestamp: Date.now(),
-        chunkId: `chunk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        chunkId,
+        userId: this.currentUserId,
+        connectionId: this.reconnectionManager.connectionId
       });
+      
+      // Record this chunk for rate limiting
+      this.recordAudioChunk(sessionId);
+      return true;
     } else {
-      console.warn('⚠️ Cannot send audio chunk: WebSocket not connected or session mismatch');
+      this.logError('Cannot send audio chunk', {
+        sessionId,
+        currentSessionId: this.currentSessionId,
+        isConnected: this.isConnected,
+        socketExists: !!this.socket,
+        userId: this.currentUserId,
+        connectionId: this.reconnectionManager.connectionId
+      });
+      return false;
     }
+  }
+
+  /**
+   * Check if audio chunk can be sent based on rate limits
+   * @param {string} sessionId - Session identifier
+   * @returns {boolean} Whether chunk can be sent
+   */
+  checkAudioChunkRateLimit(sessionId) {
+    const now = Date.now();
+    const windowStart = now - this.audioChunkRateLimiter.windowMs;
+    
+    // Clean up old entries
+    this.audioChunkRateLimiter.chunks = this.audioChunkRateLimiter.chunks.filter(
+      timestamp => timestamp > windowStart
+    );
+    
+    // Check if we're under the limit
+    return this.audioChunkRateLimiter.chunks.length < this.audioChunkRateLimiter.maxChunks;
+  }
+
+  /**
+   * Record audio chunk for rate limiting
+   * @param {string} sessionId - Session identifier
+   */
+  recordAudioChunk(sessionId) {
+    const now = Date.now();
+    this.audioChunkRateLimiter.chunks.push(now);
+    
+    // Keep only chunks from the current window
+    const windowStart = now - this.audioChunkRateLimiter.windowMs;
+    this.audioChunkRateLimiter.chunks = this.audioChunkRateLimiter.chunks.filter(
+      timestamp => timestamp > windowStart
+    );
+  }
+
+  /**
+   * Check if message can be sent based on rate limits
+   * @param {string} event - Event type
+   * @returns {boolean} Whether message can be sent
+   */
+  checkMessageRateLimit(event) {
+    const now = Date.now();
+    const windowStart = now - this.messageRateLimiter.windowMs;
+    
+    // Clean up old entries
+    this.messageRateLimiter.messages = this.messageRateLimiter.messages.filter(
+      msg => msg.timestamp > windowStart
+    );
+    
+    // Check if we're under the limit
+    return this.messageRateLimiter.messages.length < this.messageRateLimiter.maxMessages;
+  }
+
+  /**
+   * Record message for rate limiting
+   * @param {string} event - Event type
+   * @param {Object} data - Message data
+   */
+  recordMessage(event, data) {
+    const now = Date.now();
+    this.messageRateLimiter.messages.push({
+      timestamp: now,
+      event,
+      data
+    });
+    
+    // Keep only messages from the current window
+    const windowStart = now - this.messageRateLimiter.windowMs;
+    this.messageRateLimiter.messages = this.messageRateLimiter.messages.filter(
+      msg => msg.timestamp > windowStart
+    );
+  }
+
+  /**
+   * Log error with session context
+   * @param {string} message - Error message
+   * @param {Object} context - Additional context
+   */
+  logError(message, context = {}) {
+    const errorEntry = {
+      timestamp: Date.now(),
+      message,
+      context: {
+        sessionId: this.currentSessionId,
+        userId: this.currentUserId,
+        connectionId: this.reconnectionManager.connectionId,
+        isConnected: this.isConnected,
+        ...context
+      }
+    };
+    
+    this.errorLog.push(errorEntry);
+    
+    // Keep only the last maxErrorLogEntries
+    if (this.errorLog.length > this.maxErrorLogEntries) {
+      this.errorLog = this.errorLog.slice(-this.maxErrorLogEntries);
+    }
+    
+    console.error(`❌ ${message}:`, errorEntry);
+  }
+
+  /**
+   * Get error log for debugging
+   * @returns {Array} Error log entries
+   */
+  getErrorLog() {
+    return [...this.errorLog];
+  }
+
+  /**
+   * Get rate limiting statistics
+   * @returns {Object} Rate limiting stats
+   */
+  getRateLimitStats() {
+    const now = Date.now();
+    const windowStart = now - this.audioChunkRateLimiter.windowMs;
+    
+    const recentAudioChunks = this.audioChunkRateLimiter.chunks.filter(
+      timestamp => timestamp > windowStart
+    ).length;
+    
+    const recentMessages = this.messageRateLimiter.messages.filter(
+      msg => msg.timestamp > windowStart
+    ).length;
+    
+    return {
+      audioChunks: {
+        sent: recentAudioChunks,
+        limit: this.audioChunkRateLimiter.maxChunks,
+        windowMs: this.audioChunkRateLimiter.windowMs
+      },
+      messages: {
+        sent: recentMessages,
+        limit: this.messageRateLimiter.maxMessages,
+        windowMs: this.messageRateLimiter.windowMs
+      }
+    };
   }
 
   // Get connection status

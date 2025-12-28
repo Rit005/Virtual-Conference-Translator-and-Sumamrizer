@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 
@@ -98,10 +98,17 @@ model Caption {
 }
 
 model Summary {
-  id        String   @id @default(cuid())
-  sessionId String
-  content   String
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  sessionId   String
+  title       String?
+  content     String   // Overall summary text
+  keyPoints   String   // JSON array of key points
+  actionItems String   // JSON array of action items
+  questions   String   // JSON array of questions
+  metadata    String?  // JSON object with additional metadata
+  language    String   @default("en")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relations
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)

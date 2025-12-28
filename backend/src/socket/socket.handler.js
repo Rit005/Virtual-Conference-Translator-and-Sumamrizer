@@ -1,10 +1,15 @@
 import { prisma } from '../prismaClient.js';
 import transcriptionAgentRefined from '../agents/transcriptionAgentRefined.js';
 import TranslationAgent from '../agents/translationAgent.js';
-import summarizationAgent from '../agents/summarizationAgent.js';
+import SummarizationAgent from '../agents/summarizationAgent.js';
+
+// Initialize summarization agent instance
+const summarizationAgent = new SummarizationAgent();
 import { verifyToken } from '../utils/jwt.js';
 import AudioChunkHandler from './audioChunkHandler.js';
 import translationConfig from '../config/translationConfig.js';
+import errorLogger from '../utils/errorLogger.js';
+import AdvancedRateLimiter from '../utils/enhancedRateLimiter.js';
 
 class SocketHandler {
   constructor(io) {
@@ -13,6 +18,16 @@ class SocketHandler {
     this.sessionUsers = new Map(); // sessionId -> Set of userIds
     this.userLanguagePreferences = new Map(); // userId -> preferredLanguage
     this.liveCaptionIntervals = new Map(); // sessionId -> interval data
+    
+    // Initialize error logging
+    this.setupErrorLogging();
+    
+    // Initialize advanced rate limiter for audio chunks
+    this.audioRateLimiter = AdvancedRateLimiter.createAudioChunkLimiter({
+      maxRequests: 10, // 10 chunks per second
+      burstLimit: 15, // Allow bursts of 15
+      burstWindow: 2000 // 2 second burst window
+    });
     
     // Initialize TranslationAgent with production-ready configuration
     this.translationAgent = new TranslationAgent(translationConfig.agent);
@@ -23,6 +38,92 @@ class SocketHandler {
       maxChunkSize: 1024 * 1024, // 1MB
       processingTimeout: 30000, // 30 seconds
       enableDebugLogging: true
+    });
+    
+    // Track connection context for enhanced error handling
+    this.connectionContexts = new Map(); // socketId -> context data
+    this.disconnectReasons = new Map(); // socketId -> disconnect reason
+    
+    // Initialize health monitor
+    this.setupHealthMonitoring();
+    
+    errorLogger.info('socket_handler_initialized', 'SocketHandler initialized with enhanced error handling', {
+      features: ['error_logging', 'rate_limiting', 'disconnect_handling', 'health_monitoring']
+    });
+  }
+
+  /**
+   * Setup health monitoring integration
+   */
+  setupHealthMonitoring() {
+    const { HealthMonitor } = require('../utils/healthMonitor.js');
+    
+    this.healthMonitor = new HealthMonitor({
+      checkInterval: 30000, // 30 seconds
+      failureThreshold: 3,
+      autoStart: true
+    });
+    
+    // Add socket-specific health checks
+    this.healthMonitor.addCheck('socket_connections', () => {
+      const activeConnections = this.connectedUsers.size;
+      const activeSessions = this.sessionUsers.size;
+      
+      let status = 'healthy';
+      if (activeConnections === 0 && activeSessions === 0) {
+        status = 'degraded'; // No activity but not necessarily unhealthy
+      } else if (activeConnections > 1000) {
+        status = 'unhealthy'; // Too many connections
+      } else if (activeConnections > 500) {
+        status = 'degraded'; // High connection count
+      }
+      
+      return {
+        status,
+        message: `${activeConnections} active users, ${activeSessions} active sessions`,
+        details: {
+          activeConnections,
+          activeSessions,
+          userToSessionRatio: activeSessions > 0 ? (activeConnections / activeSessions).toFixed(2) : 0
+        }
+      };
+    });
+    
+    // Listen to health changes
+    this.healthMonitor.on('health_status_changed', (data) => {
+      console.log(`🏥 System health changed: ${data.previousStatus} → ${data.currentStatus}`);
+      
+      if (data.currentStatus === 'critical' || data.currentStatus === 'unhealthy') {
+        // Emit health alert to admins
+        this.io.emit('system_health_alert', {
+          status: data.currentStatus,
+          score: data.score,
+          issues: data.issues,
+          timestamp: Date.now()
+        });
+      }
+    });
+    
+    this.healthMonitor.on('fallback_activated', (data) => {
+      console.log(`🔄 Fallback activated: ${data.component} - ${data.strategy}`);
+      
+      // Notify all connected clients about degraded service
+      this.io.emit('service_degraded', {
+        component: data.component,
+        strategy: data.strategy,
+        timestamp: Date.now()
+      });
+    });
+  }
+
+  /**
+   * Setup error logging with global context
+   */
+  setupErrorLogging() {
+    // Set global context for all logs from this handler
+    errorLogger.setGlobalContext({
+      component: 'socket_handler',
+      serverId: this.io?.id || 'unknown'
     });
   }
 
@@ -1038,6 +1139,15 @@ class SocketHandler {
                 }
               });
 
+              // Collect transcription for summary generation
+              summarizationAgent.collectTranscription(sessionId, {
+                text: transcription.text,
+                speaker: `Speaker_${Math.floor(Math.random() * 5) + 1}`,
+                timestamp: caption.timestamp,
+                language: transcription.language,
+                confidence: transcription.confidence || 0.9
+              });
+
               // NOTE: Translation will be handled by TranslationAgent via events
               // This maintains the event-driven architecture where agents communicate via events
 
@@ -1213,45 +1323,139 @@ class SocketHandler {
         });
       });
 
-      // Handle disconnect with graceful cleanup
-      socket.on('disconnect', async () => {
-        console.log(`User disconnected: ${socket.id}`);
-        
-        if (socket.userId) {
-          // Handle audio stream cleanup first (graceful disconnect)
-          await this.audioChunkHandler.handleDisconnect(socket);
-          
-          // Clean up translation sessions for this user
-          for (const [sessionId] of this.sessionUsers.entries()) {
-            const translationSessionId = `${sessionId}_${socket.userId}`;
-            try {
-              await this.translationAgent.stopSession(translationSessionId);
-              console.log(`🛑 Cleaned up translation session for user ${socket.userId} in ${sessionId}`);
-            } catch (error) {
-              console.warn(`⚠️ Failed to cleanup translation session for user ${socket.userId}:`, error.message);
-            }
-          }
-          
-          // Remove from connected users
-          this.connectedUsers.delete(socket.userId);
-          
-          // Remove from all sessions
-          for (const [sessionId, users] of this.sessionUsers.entries()) {
-            if (users.has(socket.userId)) {
-              users.delete(socket.userId);
-              
-              // Notify other users
-              socket.to(sessionId).emit('user_left', {
-                userId: socket.userId,
-                userName: socket.userName,
-                timestamp: new Date()
-              });
+      // Handle disconnect with enhanced graceful cleanup
+      socket.on('disconnect', async (reason) => {
+        const disconnectContext = {
+          socketId: socket.id,
+          userId: socket.userId,
+          userName: socket.userName,
+          userRole: socket.userRole,
+          reason: reason || 'unknown',
+          timestamp: Date.now(),
+          connectedAt: this.connectionContexts.get(socket.id)?.connectedAt,
+          sessionIds: Array.from(this.sessionUsers.keys()),
+          totalSessions: this.sessionUsers.size
+        };
 
-              if (users.size === 0) {
-                this.sessionUsers.delete(sessionId);
+        errorLogger.info('socket_disconnect_started', `User disconnect initiated: ${socket.id}`, disconnectContext);
+
+        if (socket.userId) {
+          try {
+            // Store disconnect context for potential recovery
+            this.disconnectReasons.set(socket.id, disconnectContext);
+
+            // Phase 1: Audio stream cleanup (highest priority)
+            errorLogger.debug('disconnect_audio_cleanup', 'Starting audio stream cleanup', disconnectContext);
+            await this.audioChunkHandler.handleDisconnect(socket);
+            errorLogger.debug('disconnect_audio_cleanup_complete', 'Audio stream cleanup completed', disconnectContext);
+
+            // Phase 2: Translation session cleanup
+            errorLogger.debug('disconnect_translation_cleanup', 'Starting translation session cleanup', disconnectContext);
+            let translationCleanupErrors = 0;
+            for (const [sessionId] of this.sessionUsers.entries()) {
+              const translationSessionId = `${sessionId}_${socket.userId}`;
+              try {
+                await this.translationAgent.stopSession(translationSessionId);
+                errorLogger.debug('disconnect_translation_cleanup_success', `Translation session cleaned for ${sessionId}`, {
+                  ...disconnectContext,
+                  sessionId,
+                  translationSessionId
+                });
+              } catch (error) {
+                translationCleanupErrors++;
+                errorLogger.error('disconnect_translation_cleanup_error', `Failed to cleanup translation session for ${sessionId}`, {
+                  ...disconnectContext,
+                  sessionId,
+                  translationSessionId,
+                  error: error.message
+                }, error);
               }
             }
+            if (translationCleanupErrors === 0) {
+              errorLogger.debug('disconnect_translation_cleanup_complete', 'All translation sessions cleaned successfully', disconnectContext);
+            }
+
+            // Phase 3: Rate limiter cleanup
+            errorLogger.debug('disconnect_rate_limiter_cleanup', 'Cleaning up rate limiter data', disconnectContext);
+            const rateLimiterKeys = [`user:${socket.userId}`, `socket:${socket.id}`];
+            rateLimiterKeys.forEach(key => {
+              this.audioRateLimiter.reset(key, { userId: socket.userId, socketId: socket.id });
+            });
+            errorLogger.debug('disconnect_rate_limiter_cleanup_complete', 'Rate limiter data cleaned', disconnectContext);
+
+            // Phase 4: Session participation cleanup
+            errorLogger.debug('disconnect_session_cleanup', 'Cleaning up session participation', disconnectContext);
+            const cleanedSessions = [];
+            for (const [sessionId, users] of this.sessionUsers.entries()) {
+              if (users.has(socket.userId)) {
+                users.delete(socket.userId);
+                cleanedSessions.push(sessionId);
+                
+                // Notify other users in session
+                socket.to(sessionId).emit('user_left', {
+                  userId: socket.userId,
+                  userName: socket.userName,
+                  timestamp: new Date(),
+                  reason: disconnectContext.reason
+                });
+
+                // Update participant count
+                const participantCount = users.size;
+                this.io.to(sessionId).emit('participant_count_update', {
+                  sessionId,
+                  count: participantCount
+                });
+
+                if (users.size === 0) {
+                  this.sessionUsers.delete(sessionId);
+                  errorLogger.info('disconnect_session_empty', `Session ${sessionId} is now empty`, {
+                    ...disconnectContext,
+                    sessionId
+                  });
+                }
+              }
+            }
+            errorLogger.debug('disconnect_session_cleanup_complete', 'Session participation cleanup completed', {
+              ...disconnectContext,
+              cleanedSessions
+            });
+
+            // Phase 5: Connected users cleanup
+            this.connectedUsers.delete(socket.userId);
+
+            // Phase 6: Connection context cleanup
+            this.connectionContexts.delete(socket.id);
+            this.disconnectReasons.delete(socket.id);
+
+            // Log successful disconnection
+            errorLogger.info('socket_disconnect_complete', `User disconnect completed successfully: ${socket.id}`, {
+              ...disconnectContext,
+              cleanedSessions,
+              translationCleanupErrors,
+              totalDuration: Date.now() - (disconnectContext.connectedAt || Date.now())
+            });
+
+          } catch (error) {
+            // Critical error during disconnect cleanup
+            errorLogger.critical('socket_disconnect_critical_error', 'Critical error during disconnect cleanup', {
+              ...disconnectContext,
+              cleanupError: error.message,
+              stackTrace: error.stack
+            }, error);
+
+            // Emit emergency disconnect event
+            this.io.emit('emergency_disconnect', {
+              userId: socket.userId,
+              socketId: socket.id,
+              reason: 'cleanup_failed',
+              error: error.message,
+              timestamp: Date.now()
+            });
           }
+        } else {
+          // User was not authenticated
+          errorLogger.warn('socket_disconnect_unauthenticated', `Unauthenticated user disconnected: ${socket.id}`, disconnectContext);
+          this.connectionContexts.delete(socket.id);
         }
       });
 
@@ -1349,10 +1553,10 @@ class SocketHandler {
 
               // Generate summary using summarization agent
               const summaryResult = await summarizationAgent.generateSummary(
+                sessionId,
                 captions,
                 messages,
                 {
-                  sessionId,
                   summaryType: 'comprehensive',
                   language: 'en',
                   includeChat: true,
@@ -1360,11 +1564,20 @@ class SocketHandler {
                 }
               );
 
-              // Save summary to database
+              // Save structured summary to database
               await prisma.summary.create({
                 data: {
                   sessionId,
-                  content: summaryResult.summary.content
+                  title: 'Comprehensive Session Summary',
+                  content: summaryResult.summary.content,
+                  keyPoints: JSON.stringify(summaryResult.summary.keyPoints),
+                  actionItems: JSON.stringify(summaryResult.summary.actionItems),
+                  questions: JSON.stringify(summaryResult.summary.questions),
+                  metadata: JSON.stringify({
+                    ...summaryResult.summary.metadata,
+                    sessionEnded: true
+                  }),
+                  language: 'en'
                 }
               });
 

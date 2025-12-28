@@ -1,5 +1,9 @@
 import prisma from '../config/database.js';
 import SummaryService from '../services/summary.service.js';
+import SummarizationAgent from '../agents/summarizationAgent.js';
+
+// Initialize summarization agent instance
+const summarizationAgent = new SummarizationAgent();
 
 class SummaryController {
   /**
@@ -57,18 +61,34 @@ class SummaryController {
         take: 200 // Limit to last 200 messages for performance
       });
 
-      // Generate summary using AI service
-      const summaryResult = await SummaryService.generateSummary(
+      // Generate summary using SummarizationAgent
+      const summaryResult = await summarizationAgent.generateSummary(
+        sessionId,
+        [], // captions will be collected during session
         messages,
-        type,
-        session.language
+        {
+          summaryType: type,
+          language: session.language,
+          includeChat: true,
+          maxLength: 800
+        }
       );
 
-      // Save summary to database
+      // Save structured summary to database
       const summary = await prisma.summary.create({
         data: {
           sessionId,
-          content: JSON.stringify(summaryResult)
+          title: `${type.charAt(0).toUpperCase() + type.slice(1)} Summary`,
+          content: summaryResult.summary.content,
+          keyPoints: JSON.stringify(summaryResult.summary.keyPoints),
+          actionItems: JSON.stringify(summaryResult.summary.actionItems),
+          questions: JSON.stringify(summaryResult.summary.questions),
+          metadata: JSON.stringify({
+            ...summaryResult.summary.metadata,
+            summaryType: type,
+            language: session.language
+          }),
+          language: session.language
         }
       });
 
@@ -141,10 +161,13 @@ class SummaryController {
         take: parseInt(limit)
       });
 
-      // Parse JSON content for each summary
+      // Parse structured summary content for each summary
       const parsedSummaries = summaries.map(summary => ({
         ...summary,
-        content: JSON.parse(summary.content)
+        keyPoints: JSON.parse(summary.keyPoints || '[]'),
+        actionItems: JSON.parse(summary.actionItems || '[]'),
+        questions: JSON.parse(summary.questions || '[]'),
+        metadata: summary.metadata ? JSON.parse(summary.metadata) : {}
       }));
 
       const total = await prisma.summary.count({

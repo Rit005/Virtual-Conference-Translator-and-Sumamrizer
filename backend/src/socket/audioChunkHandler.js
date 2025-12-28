@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import errorLogger from '../utils/errorLogger.js';
+import AdvancedRateLimiter from '../utils/enhancedRateLimiter.js';
 
 /**
  * AudioChunkHandler - Enhanced Integration with TranscriptionAgent
@@ -20,17 +22,53 @@ class AudioChunkHandler {
     // Configuration
     this.config = {
       maxChunkSize: options.maxChunkSize || 1024 * 1024, // 1MB max chunk size
-      enableDebugLogging: options.enableDebugLogging !== false
+      enableDebugLogging: options.enableDebugLogging !== false,
+      enableRateLimiting: options.enableRateLimiting !== false,
+      rateLimitConfig: {
+        maxRequests: options.maxAudioChunks || 10,
+        burstLimit: options.burstLimit || 15,
+        burstWindow: options.burstWindow || 2000
+      }
     };
+
+    // Initialize advanced rate limiter
+    if (this.config.enableRateLimiting) {
+      this.rateLimiter = new AdvancedRateLimiter({
+        maxRequests: this.config.rateLimitConfig.maxRequests,
+        windowMs: 1000,
+        burstLimit: this.config.rateLimitConfig.burstLimit,
+        burstWindow: this.config.rateLimitConfig.burstWindow,
+        keyGenerator: (sessionId, userId) => `audio:${sessionId}:${userId}`,
+        message: 'Audio chunk rate limit exceeded. Please slow down your speech.'
+      });
+    }
 
     // Stream state management
     this.activeStreams = new Map(); // sessionId -> StreamSession
     this.chunkStats = new Map(); // sessionId -> statistics
     this.eventEmitter = new EventEmitter();
 
+    // Enhanced error tracking and logging
+    this.errorCounts = new Map(); // sessionId -> error count
+    this.processingLatencies = new Map(); // sessionId -> average latency
+    this.lastActivity = new Map(); // sessionId -> last activity time
+
     // Debug tracking
     this.debugLog = [];
     this.maxDebugEntries = 1000;
+
+    // Setup error logging context
+    this.setupErrorLogging();
+  }
+
+  /**
+   * Setup error logging with component context
+   */
+  setupErrorLogging() {
+    errorLogger.setGlobalContext({
+      component: 'audio_chunk_handler',
+      version: '2.0.0'
+    });
   }
 
   /**
@@ -46,47 +84,201 @@ class AudioChunkHandler {
   }
 
   /**
-   * Handle incoming audio chunk from client
+   * Handle incoming audio chunk from client with enhanced error handling and rate limiting
    * @param {Object} socket - Socket.IO socket instance
    * @param {Object} data - Chunk data { sessionId, audioData, chunkId, timestamp, language }
    */
   async handleAudioChunk(socket, data) {
     const { sessionId, audioData, chunkId, timestamp, language = 'en' } = data;
     const userId = socket.userId;
+    const processingStartTime = Date.now();
+    const requestId = `chunk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Enhanced context for logging
+    const chunkContext = {
+      requestId,
+      sessionId,
+      userId,
+      chunkId,
+      language,
+      socketId: socket.id,
+      audioSize: this.getChunkSize(audioData),
+      timestamp: timestamp || Date.now()
+    };
 
     try {
-      // Validate input
-      this.validateChunkData({ sessionId, audioData, chunkId, userId });
+      // Enhanced input validation with detailed error logging
+      try {
+        this.validateChunkData({ sessionId, audioData, chunkId, userId });
+      } catch (validationError) {
+        errorLogger.warn('audio_chunk_validation_failed', 'Audio chunk validation failed', {
+          ...chunkContext,
+          validationError: validationError.message
+        });
+        throw validationError;
+      }
+
+      // Check rate limiting if enabled
+      if (this.rateLimiter) {
+        const rateLimitResult = this.rateLimiter.checkLimit(
+          `${sessionId}:${userId}`,
+          'HIGH', // Audio chunks have high priority
+          chunkContext
+        );
+
+        if (!rateLimitResult.allowed) {
+          errorLogger.warn('audio_chunk_rate_limited', 'Audio chunk rejected due to rate limiting', {
+            ...chunkContext,
+            rateLimitResult,
+            reason: rateLimitResult.reason
+          });
+
+          // Emit rate limit warning to client
+          socket.emit('audio:chunk:rate_limit_warning', {
+            sessionId,
+            chunkId,
+            reason: rateLimitResult.reason,
+            resetTime: rateLimitResult.resetTime,
+            retryAfter: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
+            priority: rateLimitResult.priority,
+            effectiveLimit: rateLimitResult.effectiveLimit,
+            timestamp: Date.now()
+          });
+
+          return; // Stop processing this chunk
+        }
+
+        // Log successful rate limit check
+        errorLogger.debug('audio_chunk_rate_limit_ok', 'Audio chunk passed rate limiting', {
+          ...chunkContext,
+          rateLimitResult: {
+            priority: rateLimitResult.priority,
+            remaining: rateLimitResult.remaining,
+            burstCount: rateLimitResult.burstCount
+          }
+        });
+      }
+
+      // Update last activity tracking
+      this.lastActivity.set(sessionId, Date.now());
 
       // Get or create stream session
       const streamSession = this.getOrCreateStreamSession(sessionId, userId);
 
-      // Log chunk receipt
-      this.logChunkReceived(sessionId, userId, chunkId, audioData);
-
-      // Route chunk to TranscriptionAgent for processing
-      await this.transcriptionAgent.processChunk(sessionId, audioData, {
-        chunkId,
-        timestamp,
-        language,
-        userId,
-        socketId: socket.id
+      // Log chunk receipt with enhanced context
+      errorLogger.debug('audio_chunk_received', 'Processing audio chunk', {
+        ...chunkContext,
+        streamActive: streamSession.isActive,
+        totalChunksReceived: streamSession.chunksReceived,
+        sessionActiveStreams: this.activeStreams.size
       });
+
+      // Validate audio data size before processing
+      const chunkSize = this.getChunkSize(audioData);
+      if (chunkSize > this.config.maxChunkSize) {
+        const sizeError = new Error(`Chunk size ${chunkSize} exceeds maximum ${this.config.maxChunkSize}`);
+        errorLogger.warn('audio_chunk_size_exceeded', 'Audio chunk size limit exceeded', {
+          ...chunkContext,
+          chunkSize,
+          maxSize: this.config.maxChunkSize,
+          sizeInKB: Math.round(chunkSize / 1024)
+        });
+        throw sizeError;
+      }
+
+      // Route chunk to TranscriptionAgent for processing with enhanced error handling
+      try {
+        const transcriptionContext = {
+          ...chunkContext,
+          processingStartTime,
+          requestId
+        };
+
+        errorLogger.debug('audio_chunk_transcription_started', 'Starting transcription processing', transcriptionContext);
+
+        await this.transcriptionAgent.processChunk(sessionId, audioData, {
+          chunkId,
+          timestamp,
+          language,
+          userId,
+          socketId: socket.id,
+          requestId
+        });
+
+        const processingTime = Date.now() - processingStartTime;
+        this.updateProcessingLatency(sessionId, processingTime);
+
+        errorLogger.debug('audio_chunk_transcription_completed', 'Transcription processing completed', {
+          ...transcriptionContext,
+          processingTime,
+          latencyMs: processingTime
+        });
+
+      } catch (transcriptionError) {
+        // Increment error count for this session
+        const currentErrors = this.errorCounts.get(sessionId) || 0;
+        this.errorCounts.set(sessionId, currentErrors + 1);
+
+        errorLogger.error('audio_chunk_transcription_error', 'Transcription processing failed', {
+          ...chunkContext,
+          transcriptionError: transcriptionError.message,
+          processingTime: Date.now() - processingStartTime,
+          sessionErrorCount: currentErrors + 1,
+          stackTrace: transcriptionError.stack
+        }, transcriptionError);
+
+        throw transcriptionError;
+      }
 
       // Update session statistics
       this.updateSessionStats(sessionId, audioData);
 
-      // Emit chunk received event
-      this.eventEmitter.emit('chunk:received', {
+      // Emit chunk received event with enhanced data
+      const chunkEvent = {
         sessionId,
         userId,
         chunkId,
         chunkSize: this.getChunkSize(audioData),
-        timestamp: new Date()
+        timestamp: new Date(),
+        processingTime: Date.now() - processingStartTime,
+        requestId,
+        rateLimited: false
+      };
+
+      this.eventEmitter.emit('chunk:received', chunkEvent);
+
+      // Log successful processing
+      errorLogger.debug('audio_chunk_processed_success', 'Audio chunk processed successfully', {
+        ...chunkContext,
+        processingTime: Date.now() - processingStartTime,
+        totalSessionChunks: this.chunkStats.get(sessionId)?.chunksReceived || 0
       });
 
     } catch (error) {
-      this.handleChunkError(socket, sessionId, chunkId, error);
+      // Enhanced error handling with comprehensive logging
+      const processingTime = Date.now() - processingStartTime;
+      const errorContext = {
+        ...chunkContext,
+        processingTime,
+        errorType: error.constructor.name,
+        errorMessage: error.message,
+        stackTrace: error.stack
+      };
+
+      // Increment error count for this session
+      const currentErrors = this.errorCounts.get(sessionId) || 0;
+      this.errorCounts.set(sessionId, currentErrors + 1);
+
+      // Log different error levels based on error type
+      if (error.message.includes('rate limit') || error.message.includes('validation')) {
+        errorLogger.warn('audio_chunk_client_error', 'Audio chunk client error', errorContext);
+      } else if (error.message.includes('transcription') || error.message.includes('processing')) {
+        errorLogger.error('audio_chunk_processing_error', 'Audio chunk processing error', errorContext, error);
+      } else {
+        errorLogger.critical('audio_chunk_critical_error', 'Audio chunk critical error', errorContext, error);
+      }
+
+      this.handleChunkError(socket, sessionId, chunkId, error, errorContext);
     }
   }
 

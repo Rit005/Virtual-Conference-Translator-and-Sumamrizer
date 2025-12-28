@@ -235,24 +235,39 @@ const SummaryPanel = () => {
                 `}>
                   {t('keyPoints')}
                 </h4>
+                {summary.keyPoints && (
+                  <span className={`
+                    text-xs px-2 py-1 rounded-full
+                    ${isDark ? 'bg-blue-900 text-blue-200' : 'bg-blue-100 text-blue-800'}
+                  `}>
+                    {summary.keyPoints.length} points
+                  </span>
+                )}
               </div>
-              <ul className="space-y-2">
-                {(summary.keyPoints || []).map((point, index) => (
-                  <li
-                    key={index}
-                    className={`
-                      flex items-start space-x-2 p-2 rounded
-                      ${isDark 
-                        ? 'text-gray-200' 
-                        : 'text-gray-800'
-                      }
-                    `}
-                  >
-                    <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
-                    <span className="text-sm leading-relaxed">{point}</span>
-                  </li>
-                ))}
-              </ul>
+              {summary.keyPoints && summary.keyPoints.length > 0 ? (
+                <ul className="space-y-2">
+                  {summary.keyPoints.map((point, index) => (
+                    <li
+                      key={index}
+                      className={`
+                        flex items-start space-x-2 p-2 rounded
+                        ${isDark 
+                          ? 'text-gray-200 hover:bg-gray-600' 
+                          : 'text-gray-800 hover:bg-gray-100'
+                        }
+                        transition-colors cursor-pointer
+                      `}
+                    >
+                      <div className="w-2 h-2 bg-yellow-500 rounded-full mt-2 flex-shrink-0" />
+                      <span className="text-sm leading-relaxed">{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className={`text-sm italic ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                  No key points extracted
+                </p>
+              )}
             </div>
 
             {/* Action Items */}
@@ -271,28 +286,88 @@ const SummaryPanel = () => {
                 `}>
                   {t('actionItems')}
                 </h4>
+                {summary.actionItems && (
+                  <span className={`
+                    text-xs px-2 py-1 rounded-full
+                    ${isDark ? 'bg-green-900 text-green-200' : 'bg-green-100 text-green-800'}
+                  `}>
+                    {summary.actionItems.length} items
+                  </span>
+                )}
               </div>
-              <ul className="space-y-2">
-                {(summary.actionItems || []).map((item, index) => (
-                  <li
-                    key={index}
-                    className={`
-                      flex items-start space-x-2 p-2 rounded
-                      ${isDark 
-                        ? 'text-gray-200' 
-                        : 'text-gray-800'
-                      }
-                    `}
-                  >
-                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0" />
-                    <span className="text-sm leading-relaxed">{item}</span>
-                  </li>
-                ))}
-              </ul>
+              {summary.actionItems && summary.actionItems.length > 0 ? (
+                <ul className="space-y-2">
+                  {summary.actionItems.map((item, index) => (
+                    <li
+                      key={index}
+                      className={`
+                        flex items-start space-x-2 p-2 rounded
+                        ${isDark 
+                          ? 'text-gray-200 hover:bg-gray-600' 
+                          : 'text-gray-800 hover:bg-gray-100'
+                        }
+                        transition-colors cursor-pointer
+                      `}
+                    >
+                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0" />
+                      <span className="text-sm leading-relaxed">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className={`text-sm italic ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                  No action items identified
+                </p>
+              )}
             </div>
 
+            {/* Questions Raised */}
+            {summary.questions && summary.questions.length > 0 && (
+              <div className={`
+                p-4 rounded-lg border
+                ${isDark 
+                  ? 'bg-gray-700 border-gray-600' 
+                  : 'bg-gray-50 border-gray-200'
+                }
+              `}>
+                <div className="flex items-center space-x-2 mb-3">
+                  <ClipboardDocumentListIcon className="w-5 h-5 text-purple-500" />
+                  <h4 className={`
+                    text-lg font-semibold
+                    ${isDark ? 'text-white' : 'text-gray-900'}
+                  `}>
+                    Questions Raised
+                  </h4>
+                  <span className={`
+                    text-xs px-2 py-1 rounded-full
+                    ${isDark ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}
+                  `}>
+                    {summary.questions.length} questions
+                  </span>
+                </div>
+                <ul className="space-y-2">
+                  {summary.questions.map((question, index) => (
+                    <li
+                      key={index}
+                      className={`
+                        flex items-start space-x-2 p-2 rounded
+                        ${isDark 
+                          ? 'text-gray-200 hover:bg-gray-600' 
+                          : 'text-gray-800 hover:bg-gray-100'
+                        }
+                        transition-colors cursor-pointer
+                      `}
+                    >
+                      <div className="w-2 h-2 bg-purple-500 rounded-full mt-2 flex-shrink-0" />
+                      <span className="text-sm leading-relaxed italic">{question}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Generated Info */}
-            {summary.generatedAt && (
+            {summary.metadata && (
               <div className={`
                 p-3 rounded-lg border border-dashed
                 ${isDark 
@@ -300,9 +375,35 @@ const SummaryPanel = () => {
                   : 'border-gray-300 text-gray-600'
                 }
               `}>
-                <p className="text-xs text-center">
-                  Summary generated at {new Date(summary.generatedAt).toLocaleString()}
-                </p>
+                <div className="text-xs text-center space-y-1">
+                  <p>
+                    Generated at {new Date(summary.metadata.processingTime || summary.generatedAt || Date.now()).toLocaleString()}
+                  </p>
+                  <div className="flex items-center justify-center space-x-4">
+                    {summary.metadata.aiModel && (
+                      <span className="flex items-center space-x-1">
+                        <SparklesIcon className="w-3 h-3" />
+                        <span>{summary.metadata.aiModel}</span>
+                      </span>
+                    )}
+                    {summary.metadata.useMockMode !== undefined && (
+                      <span className={`
+                        px-2 py-1 rounded-full text-xs
+                        ${summary.metadata.useMockMode 
+                          ? 'bg-yellow-100 text-yellow-800' 
+                          : 'bg-green-100 text-green-800'
+                        }
+                      `}>
+                        {summary.metadata.useMockMode ? 'Demo Mode' : 'GPT-4 Mode'}
+                      </span>
+                    )}
+                    {summary.metadata.confidence && (
+                      <span className="text-xs">
+                        {Math.round(summary.metadata.confidence * 100)}% confidence
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>
