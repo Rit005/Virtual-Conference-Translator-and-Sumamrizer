@@ -13,7 +13,7 @@ import {
   StarIcon,
   StarIcon as StarOutlineIcon,
   TagIcon,
-  ChatBubbleQuestionIcon,
+
   ClipboardDocumentListIcon,
   SparklesIcon,
   ShieldCheckIcon,
@@ -298,7 +298,7 @@ const ChatQAPanel = () => {
       >
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
-            <ChatBubbleQuestionIcon className="w-6 h-6 text-blue-500" />
+            <ChatBubbleLeftRightIcon className="w-6 h-6 text-blue-500" />
             <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
               Chat / Q&A
             </h3>

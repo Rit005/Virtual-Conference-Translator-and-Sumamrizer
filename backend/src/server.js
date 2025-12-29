@@ -8,182 +8,170 @@ import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import "./config/passport.js";
 
+import "./config/passport.js";
 
 // Load environment variables
 dotenv.config();
 
-// Import database connection
+// Database
 import { prisma } from "./prismaClient.js";
 
-// Import Socket.IO handler
+// 🔥 AGENTS
+import TranscriptionAgent from "./agents/transcriptionAgentRefined.js";
+import WhisperASRService from "./services/whisper.service.js";
+
+// Socket handler
 import SocketHandler from "./socket/socket.handler.js";
 
-// Import routes
+// Routes
 import authRoutes from "./routes/auth.routes.js";
 import { router as sessionRoutes } from "./routes/session.routes.js";
 import { router as summaryRoutes } from "./routes/summary.routes.js";
 import conferenceRoutes from "./routes/conference.routes.js";
 
-// Create Express app
-const app = express();
+/* ───────────────────────────────────────────── */
+/* APP & SERVER SETUP */
+/* ───────────────────────────────────────────── */
 
-// Create HTTP server
+const app = express();
 const server = createServer(app);
 
-// Import passport configuration (must be after app creation)
-import './config/passport.js';
+/* ───────────────────────────────────────────── */
+/* SECURITY & MIDDLEWARE */
+/* ───────────────────────────────────────────── */
 
-// Security middleware
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-    },
-  },
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  })
+);
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
-app.use(limiter);
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+  })
+);
 
-// CORS configuration
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173",
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    credentials: true,
+  })
+);
 
-// Socket.IO configuration
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(cookieParser());
+
+if (process.env.NODE_ENV !== "test") {
+  app.use(morgan("combined"));
+}
+
+app.use(passport.initialize());
+
+/* ───────────────────────────────────────────── */
+/* SOCKET.IO */
+/* ───────────────────────────────────────────── */
+
 const io = new Server(server, {
   cors: {
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
     credentials: true,
-    methods: ['GET', 'POST']
   },
-  transports: ['websocket', 'polling']
+  transports: ["websocket", "polling"],
 });
 
-// Initialize Socket.IO handler
-const socketHandler = new SocketHandler(io);
-socketHandler.initialize();
+/* ───────────────────────────────────────────── */
+/* 🔥 TRANSCRIPTION AGENT INITIALIZATION */
+/* ───────────────────────────────────────────── */
 
-console.log('✅ Socket.IO initialized');
+const asrService = new WhisperASRService({
+  apiKey: process.env.OPENAI_API_KEY || "mock",
+});
 
-// Middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(cookieParser());
+const transcriptionAgent = new TranscriptionAgent({
+  asrService,
+  enableDebugLogging: true,
+});
 
-// Logging
-if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined'));
-}
+await transcriptionAgent.initialize();
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
+/* ───────────────────────────────────────────── */
+/* SOCKET HANDLER */
+/* ───────────────────────────────────────────── */
+
+const socketHandler = new SocketHandler(io, transcriptionAgent);
+await socketHandler.initialize();
+
+console.log("✅ Socket.IO + Agents initialized");
+
+/* ───────────────────────────────────────────── */
+/* ROUTES */
+/* ───────────────────────────────────────────── */
+
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
   });
 });
 
-// API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/summary", summaryRoutes);
 app.use("/api/conference", conferenceRoutes);
 
-// 404 handler
-app.use('*', (req, res) => {
+/* ───────────────────────────────────────────── */
+/* ERROR HANDLING */
+/* ───────────────────────────────────────────── */
+
+app.use("*", (req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route ${req.originalUrl} not found`
+    message: `Route ${req.originalUrl} not found`,
   });
 });
 
-// Global error handler
 app.use((error, req, res, next) => {
-  console.error('Global error:', error);
-  
-  // Prisma errors
-  if (error.code === 'P2002') {
-    return res.status(400).json({
-      success: false,
-      message: 'Duplicate entry - this record already exists'
-    });
-  }
-  
-  if (error.code === 'P2025') {
-    return res.status(404).json({
-      success: false,
-      message: 'Record not found'
-    });
-  }
-  
-  // JWT errors
-  if (error.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid token'
-    });
-  }
-  
-  if (error.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      success: false,
-      message: 'Token expired'
-    });
-  }
-  
-  // Default error
+  console.error("Global error:", error);
+
   res.status(error.status || 500).json({
     success: false,
-    message: error.message || 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+    message: error.message || "Internal server error",
+    ...(process.env.NODE_ENV === "development" && { stack: error.stack }),
   });
 });
 
-// Initialize Passport
-app.use(passport.initialize());
+/* ───────────────────────────────────────────── */
+/* SERVER START */
+/* ───────────────────────────────────────────── */
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully');
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-// Start server
 const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
   console.log(`✅ Backend running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔐 OAuth configured: ${!!(process.env.GOOGLE_CLIENT_ID && process.env.GITHUB_CLIENT_ID)}`);
-  console.log(`📧 Email configured: ${!!(process.env.SMTP_USER && process.env.SMTP_PASS)}`);
-  console.log(`🔌 Socket.IO enabled for real-time features`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`🔌 Socket.IO enabled`);
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't crash the server, but log the error
+/* ───────────────────────────────────────────── */
+/* GRACEFUL SHUTDOWN */
+/* ───────────────────────────────────────────── */
+
+const shutdown = async () => {
+  console.log("🔴 Shutting down gracefully...");
+  await transcriptionAgent.shutdown();
+  await prisma.$disconnect();
+  process.exit(0);
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
 });
 
 export { app, server, prisma };

@@ -1,370 +1,153 @@
 /**
- * Enhanced Whisper Service with Real OpenAI API Integration
- * 
- * Provides production-ready speech-to-text capabilities using OpenAI Whisper API
- * with proper error handling, rate limiting, and circuit breaker patterns.
+ * Whisper ASR Service (Production Safe)
+ * Compatible with TranscriptionAgentRefined
  */
 
-import ASRService from './asrService.js';
-import OpenAI from 'openai';
+import OpenAI from "openai";
+import { Readable } from "stream";
+import ASRService from "./asrService.js";
 
-class WhisperService extends ASRService {
+class WhisperASRService extends ASRService {
   constructor(config = {}) {
     super({
-      // Default configuration
-      apiKey: process.env.OPENAI_API_KEY,
-      model: 'whisper-1',
-      timeout: 30000, // 30 seconds
-      maxRetries: 3,
-      retryDelay: 1000, // 1 second
-      maxAudioSize: 25 * 1024 * 1024, // 25MB (OpenAI limit)
-      supportedLanguages: [
-        'af', 'am', 'ar', 'as', 'az', 'ba', 'be', 'bg', 'bn', 'bo', 'br', 'bs', 
-        'ca', 'cs', 'cy', 'da', 'de', 'el', 'en', 'es', 'et', 'eu', 'fa', 'fi', 
-        'fo', 'fr', 'gl', 'gu', 'ha', 'haw', 'he', 'hi', 'hr', 'ht', 'hu', 'hy', 
-        'id', 'is', 'it', 'ja', 'jw', 'ka', 'kk', 'km', 'kn', 'ko', 'la', 'lb', 
-        'ln', 'lo', 'lt', 'lv', 'mg', 'mi', 'mk', 'ml', 'mn', 'mr', 'ms', 'mt', 
-        'my', 'ne', 'nl', 'nn', 'no', 'oc', 'pa', 'pl', 'ps', 'pt', 'ro', 'ru', 
-        'sa', 'si', 'sk', 'sl', 'sn', 'so', 'sq', 'sr', 'su', 'sv', 'sw', 'ta', 
-        'te', 'tg', 'th', 'tk', 'tl', 'tr', 'tt', 'uk', 'ur', 'uz', 'vi', 'yi', 
-        'yo', 'zh'
-      ],
+      maxAudioSize: 25 * 1024 * 1024,
       ...config
     });
 
-    // OpenAI client
-    this.openai = null;
-    this.circuitBreaker = {
-      state: 'CLOSED', // CLOSED, OPEN, HALF_OPEN
-      failureCount: 0,
-      lastFailureTime: null,
-      resetTimeout: 60000, // 1 minute
-      failureThreshold: 5
+    this.config = {
+      apiKey: process.env.OPENAI_API_KEY || null,
+      model: "whisper-1",
+      timeout: 30000,
+      maxRetries: 2,
+      retryDelay: 1000,
+      ...config
     };
-    
-    this.requestQueue = [];
-    this.isProcessing = false;
+
+    this.openai = null;
+    this.initialized = false;
   }
 
-  /**
-   * Initialize the Whisper service
-   * @returns {Promise<boolean>} Initialization success
-   */
-  async initialize() {
-    try {
-      if (!this.config.apiKey) {
-        throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable.');
-      }
+  /* ================= INITIALIZATION ================= */
 
+  async initialize() {
+    if (!this.config.apiKey) {
+      console.warn("⚠️ Whisper running in MOCK mode (no API key)");
+      this.initialized = true;
+      return true;
+    }
+
+    try {
       this.openai = new OpenAI({
         apiKey: this.config.apiKey,
         timeout: this.config.timeout
       });
 
-      // Test the API connection
-      await this.healthCheck();
-      
-      this.isInitialized = true;
-      console.log('✅ WhisperService initialized successfully');
-      
+      this.initialized = true;
+      console.log("✅ WhisperService initialized");
       return true;
-    } catch (error) {
-      console.error('❌ Failed to initialize WhisperService:', error.message);
-      this.isInitialized = false;
+    } catch (err) {
+      console.error("❌ Whisper init failed:", err.message);
+      this.initialized = false;
       return false;
     }
   }
 
-  /**
-   * Transcribe audio buffer to text using OpenAI Whisper API
-   * @param {Buffer|string} audioBuffer - Audio data to transcribe
-   * @param {Object} options - Transcription options
-   * @returns {Promise<Object>} Transcription result
-   */
-  async transcribe(audioBuffer, options = {}) {
-    const startTime = Date.now();
-    
-    try {
-      // Validate audio format
-      const validation = this.validateAudioFormat(audioBuffer);
-      if (!validation.valid) {
-        throw new Error(`Invalid audio format: ${validation.errors.join(', ')}`);
-      }
+  /* ================= VALIDATION ================= */
 
-      // Check circuit breaker
-      if (this.isCircuitBreakerOpen()) {
-        throw new Error('Circuit breaker is OPEN - service temporarily unavailable');
-      }
+  validateAudioFormat(audioData) {
+    if (!audioData) {
+      return { valid: false, errors: ["Missing audio data"] };
+    }
 
-      // Prepare transcription parameters
-      const transcriptionParams = {
-        model: this.config.model,
-        language: options.language || 'en',
-        response_format: 'verbose_json',
-        temperature: options.temperature || 0,
-        timestamp_granularities: options.timestamps ? ['word'] : []
-      };
+    const size = Buffer.isBuffer(audioData)
+      ? audioData.length
+      : Buffer.byteLength(audioData, "base64");
 
-      // Add optional parameters
-      if (options.prompt) {
-        transcriptionParams.prompt = options.prompt;
-      }
-
-      console.log(`🎤 Starting Whisper transcription (${validation.size} bytes)`);
-
-      // Call OpenAI Whisper API
-      const transcription = await this.openai.audio.transcriptions.create({
-        file: audioBuffer,
-        ...transcriptionParams
-      });
-
-      const processingTime = Date.now() - startTime;
-      
-      // Reset circuit breaker on success
-      this.resetCircuitBreaker();
-
-      const result = {
-        text: transcription.text,
-        language: transcription.language || options.language || 'en',
-        confidence: this.calculateConfidence(transcription),
-        duration: transcription.duration || 0,
-        timestamp: new Date(),
-        isFinal: true,
-        processingTime,
-        service: 'whisper',
-        metadata: {
-          model: transcriptionParams.model,
-          wordCount: transcription.text.split(' ').length,
-          characterCount: transcription.text.length
-        }
-      };
-
-      console.log(`✅ Whisper transcription completed in ${processingTime}ms`);
-      return result;
-
-    } catch (error) {
-      this.handleCircuitBreakerFailure();
-      console.error('❌ Whisper transcription failed:', error.message);
-      
-      // Return a fallback result instead of throwing
+    if (size > this.config.maxAudioSize) {
       return {
-        text: '',
-        language: options.language || 'en',
-        confidence: 0,
-        duration: 0,
-        timestamp: new Date(),
-        isFinal: true,
-        error: error.message,
-        service: 'whisper',
-        fallback: true
+        valid: false,
+        errors: [`Audio size exceeds ${this.config.maxAudioSize} bytes`]
       };
     }
+
+    return { valid: true, size };
   }
 
-  /**
-   * Get partial/real-time transcription
-   * @param {Buffer|string} audioBuffer - Audio data for partial transcription
-   * @param {Object} options - Transcription options
-   * @returns {Promise<Object>} Partial transcription result
-   */
-  async transcribePartial(audioBuffer, options = {}) {
-    // For partial transcriptions, we'll use shorter timeouts and return interim results
-    const partialOptions = {
-      ...options,
-      timeout: Math.min(this.config.timeout, 10000), // Max 10s for partial
-      temperature: 0.2 // Slightly higher temperature for more creative partial results
-    };
+  /* ================= TRANSCRIPTION ================= */
 
-    try {
-      const result = await this.transcribe(audioBuffer, partialOptions);
-      
-      // Mark as partial if it has content
-      if (result.text && result.text.trim().length > 0) {
-        result.isFinal = false;
-        result.partialText = result.text;
-      }
+  async transcribe(audioData, options = {}) {
+    if (!this.initialized) {
+      throw new Error("WhisperService not initialized");
+    }
 
-      return result;
-    } catch (error) {
-      console.error('Partial transcription failed:', error.message);
+    /** 🔁 MOCK MODE */
+    if (!this.config.apiKey) {
       return {
-        text: '',
-        language: options.language || 'en',
-        confidence: 0,
-        duration: 0,
-        timestamp: new Date(),
+        text: "Mock transcription (Whisper not configured)",
+        language: options.language || "en",
+        confidence: 0.95,
         isFinal: false,
-        error: error.message,
-        service: 'whisper',
-        partial: true
-      };
-    }
-  }
-
-  /**
-   * Detect language of audio content using Whisper's built-in language detection
-   * @param {Buffer|string} audioBuffer - Audio data
-   * @returns {Promise<Object>} Language detection result
-   */
-  async detectLanguage(audioBuffer) {
-    try {
-      // Use Whisper with no language specified to auto-detect
-      const transcription = await this.openai.audio.transcriptions.create({
-        file: audioBuffer,
-        model: this.config.model,
-        response_format: 'verbose_json'
-      });
-
-      return {
-        language: transcription.language || 'unknown',
-        confidence: 0.9, // Whisper's language detection is generally reliable
-        timestamp: new Date(),
-        service: 'whisper'
-      };
-    } catch (error) {
-      console.error('Language detection failed:', error.message);
-      return {
-        language: 'unknown',
-        confidence: 0,
-        timestamp: new Date(),
-        error: error.message,
-        service: 'whisper'
-      };
-    }
-  }
-
-  /**
-   * Enhanced health check with API connectivity test
-   * @returns {Promise<Object>} Health status
-   */
-  async healthCheck() {
-    const basicHealth = await super.healthCheck();
-    
-    if (!this.isInitialized) {
-      return {
-        ...basicHealth,
-        healthy: false,
-        reason: 'Service not initialized'
+        duration: 2,
+        metadata: { provider: "mock-whisper" }
       };
     }
 
-    try {
-      // Test API connectivity with a minimal request
-      // We can't make actual API calls in health check without consuming quota
-      // So we'll just verify the client is properly configured
-      return {
-        ...basicHealth,
-        healthy: true,
-        apiKeyConfigured: !!this.config.apiKey,
-        circuitBreakerState: this.circuitBreaker.state,
-        supportedLanguages: this.config.supportedLanguages.length
-      };
-    } catch (error) {
-      return {
-        ...basicHealth,
-        healthy: false,
-        error: error.message
-      };
-    }
-  }
+    const audioBuffer = Buffer.isBuffer(audioData)
+      ? audioData
+      : Buffer.from(audioData, "base64");
 
-  /**
-   * Calculate confidence score from Whisper response
-   * @param {Object} transcription - Whisper transcription response
-   * @returns {number} Confidence score (0-1)
-   */
-  calculateConfidence(transcription) {
-    // Whisper doesn't provide explicit confidence scores
-    // We'll estimate based on text characteristics
-    const text = transcription.text || '';
-    
-    if (!text.trim()) return 0;
-    
-    // Basic heuristics for confidence estimation
-    let confidence = 0.5; // Base confidence
-    
-    // Higher confidence for longer, complete sentences
-    if (text.length > 50) confidence += 0.2;
-    if (text.includes('.') || text.includes('!') || text.includes('?')) confidence += 0.1;
-    
-    // Lower confidence for very short or fragmented text
-    if (text.length < 10) confidence -= 0.3;
-    
-    // Penalize excessive punctuation or unusual characters
-    const punctuationRatio = (text.match(/[.!?,:;]/g) || []).length / text.length;
-    if (punctuationRatio > 0.3) confidence -= 0.2;
-    
-    return Math.max(0, Math.min(1, confidence));
-  }
+    const audioStream = Readable.from(audioBuffer);
 
-  /**
-   * Circuit breaker failure handling
-   */
-  handleCircuitBreakerFailure() {
-    this.circuitBreaker.failureCount++;
-    this.circuitBreaker.lastFailureTime = Date.now();
+    let lastError;
 
-    if (this.circuitBreaker.failureCount >= this.circuitBreaker.failureThreshold) {
-      this.circuitBreaker.state = 'OPEN';
-      console.warn('🔴 Circuit breaker OPENED due to repeated failures');
-    }
-  }
+    for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
+      try {
+        const response = await this.openai.audio.transcriptions.create({
+          file: audioStream,
+          model: this.config.model,
+          language: options.language,
+          response_format: "verbose_json"
+        });
 
-  /**
-   * Reset circuit breaker on successful operation
-   */
-  resetCircuitBreaker() {
-    this.circuitBreaker.failureCount = 0;
-    this.circuitBreaker.state = 'CLOSED';
-  }
-
-  /**
-   * Check if circuit breaker is open
-   * @returns {boolean} Circuit breaker status
-   */
-  isCircuitBreakerOpen() {
-    if (this.circuitBreaker.state === 'OPEN') {
-      const timeSinceLastFailure = Date.now() - this.circuitBreaker.lastFailureTime;
-      if (timeSinceLastFailure > this.circuitBreaker.resetTimeout) {
-        this.circuitBreaker.state = 'HALF_OPEN';
-        console.log('🟡 Circuit breaker moved to HALF_OPEN state');
+        return {
+          text: response.text,
+          language: response.language || options.language || "en",
+          confidence: this.estimateConfidence(response.text),
+          isFinal: true,
+          duration: response.duration || 0,
+          metadata: {
+            provider: "openai-whisper",
+            attempt
+          }
+        };
+      } catch (err) {
+        lastError = err;
+        await new Promise(r => setTimeout(r, this.config.retryDelay));
       }
     }
-    
-    return this.circuitBreaker.state === 'OPEN';
+
+    throw lastError;
   }
 
-  /**
-   * Get circuit breaker status
-   * @returns {Object} Circuit breaker information
-   */
-  getCircuitBreakerStatus() {
-    return {
-      state: this.circuitBreaker.state,
-      failureCount: this.circuitBreaker.failureCount,
-      lastFailureTime: this.circuitBreaker.lastFailureTime,
-      resetTimeout: this.circuitBreaker.resetTimeout,
-      failureThreshold: this.circuitBreaker.failureThreshold
-    };
+  /* ================= CONFIDENCE ================= */
+
+  estimateConfidence(text = "") {
+    if (!text.trim()) return 0;
+
+    let score = 0.6;
+    if (text.length > 40) score += 0.2;
+    if (/[.!?]/.test(text)) score += 0.1;
+    if (text.length < 10) score -= 0.3;
+
+    return Math.min(1, Math.max(0, score));
   }
 
-  /**
-   * Cleanup resources
-   */
+  /* ================= CLEANUP ================= */
+
   async cleanup() {
-    await super.cleanup();
-    this.requestQueue = [];
-    this.isProcessing = false;
-    console.log('🧹 WhisperService cleaned up');
-  }
-
-  /**
-   * Get supported languages
-   * @returns {Array<string>} Array of supported language codes
-   */
-  getSupportedLanguages() {
-    return [...this.config.supportedLanguages];
+    this.initialized = false;
+    this.openai = null;
   }
 }
 
-export default WhisperService;
+export default WhisperASRService;

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../hooks/useTheme.js';
 import { useWebSocket } from '../../contexts/WebSocketContext.jsx';
 import { useAuth } from '../../contexts/AuthContext.jsx';
-import { useAudioStreaming } from '../../hooks/useAudioStreaming.js';
+import useAudioStreaming from '../../hooks/useAudioStreaming';
 import ConferenceService from '../../services/conferenceService.js';
 import LiveCaptions from './LiveCaptions.jsx';
 import ChatQAPanel from './ChatQAPanel.jsx';

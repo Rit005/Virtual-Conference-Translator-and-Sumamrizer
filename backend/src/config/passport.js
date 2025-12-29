@@ -1,97 +1,103 @@
-import passport from "passport";
-import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import { Strategy as GitHubStrategy } from "passport-github2";
-import { prisma } from "../prismaClient.js";
+import passport from 'passport';
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
+import { Strategy as GitHubStrategy } from 'passport-github2';
+import { prisma } from '../prismaClient.js';
 
+const {
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GITHUB_CLIENT_ID,
+  GITHUB_CLIENT_SECRET,
+  CLIENT_URL
+} = process.env;
 
-/* ===========================
-   GOOGLE OAUTH STRATEGY
-=========================== */
-
-if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+/* ---------------- GOOGLE STRATEGY ---------------- */
+if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
   passport.use(
     new GoogleStrategy(
       {
-        clientID: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL: "/api/auth/google/callback",
+        clientID: GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE_CLIENT_SECRET,
+        callbackURL: '/api/auth/google/callback'
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
           const email = profile.emails?.[0]?.value;
-
-          if (!email) {
-            return done(new Error("Google account has no email"), null);
-          }
 
           let user = await prisma.user.findUnique({ where: { email } });
 
           if (!user) {
             user = await prisma.user.create({
               data: {
-                name: profile.displayName,
                 email,
-                provider: "GOOGLE",
-                isVerified: true,
-              },
+                name: profile.displayName,
+                provider: 'google'
+              }
             });
           }
 
-          done(null, user);
-        } catch (error) {
-          done(error, null);
+          return done(null, user);
+        } catch (err) {
+          return done(err, null);
         }
       }
     )
   );
+
+  console.log('✅ Google OAuth strategy registered');
 } else {
-  console.warn("⚠️ Google OAuth not configured");
+  console.warn('⚠️ Google OAuth not configured');
 }
 
-/* ===========================
-   GITHUB OAUTH STRATEGY
-=========================== */
-
-if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+/* ---------------- GITHUB STRATEGY ---------------- */
+if (GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET) {
   passport.use(
     new GitHubStrategy(
       {
-        clientID: process.env.GITHUB_CLIENT_ID,
-        clientSecret: process.env.GITHUB_CLIENT_SECRET,
-        callbackURL: "/api/auth/github/callback",
-        scope: ["user:email"],
+        clientID: GITHUB_CLIENT_ID,
+        clientSecret: GITHUB_CLIENT_SECRET,
+        callbackURL: '/api/auth/github/callback',
+        scope: ['user:email']
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
-          // GitHub may or may not return email
-          const email =
-            profile.emails?.find((e) => e.verified)?.value ||
-            profile.emails?.[0]?.value ||
-            `${profile.username}@github.com`;
+          const email = profile.emails?.[0]?.value;
 
-          let user = await prisma.user.findUnique({
-            where: { email },
-          });
+          let user = await prisma.user.findUnique({ where: { email } });
 
           if (!user) {
             user = await prisma.user.create({
               data: {
-                name: profile.username || "GitHub User",
                 email,
-                provider: "GITHUB",
-                isVerified: true,
-              },
+                name: profile.username,
+                provider: 'github'
+              }
             });
           }
 
-          done(null, user);
-        } catch (error) {
-          console.error("GitHub OAuth Error:", error);
-          done(error, null);
+          return done(null, user);
+        } catch (err) {
+          return done(err, null);
         }
       }
     )
   );
+
+  console.log('✅ GitHub OAuth strategy registered');
 } else {
-  console.warn("⚠️ GitHub OAuth not configured");
+  console.warn('⚠️ GitHub OAuth not configured');
 }
+
+/* ---------------- SERIALIZATION ---------------- */
+passport.serializeUser((user, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id } });
+    done(null, user);
+  } catch (err) {
+    done(err, null);
+  }
+});
