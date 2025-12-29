@@ -2,7 +2,7 @@
 export const API_BASE_URL = 'http://localhost:3002/api';
 
 // WebSocket Configuration
-export const WS_BASE_URL = 'ws://localhost:3002';
+export const WS_BASE_URL = 'ws://localhost:3001';
 
 // Auth Constants
 export const AUTH_CONSTANTS = {

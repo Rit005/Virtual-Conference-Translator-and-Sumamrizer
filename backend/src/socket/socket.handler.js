@@ -32,7 +32,6 @@ class SocketHandler {
 
     this.translationAgent = new TranslationAgent(translationConfig.agent);
 
-    // 🔥 AudioChunkHandler OWNS the TranscriptionAgent instance
     this.audioChunkHandler = new AudioChunkHandler(io, {
       chunkBufferSize: 10,
       maxChunkSize: 1024 * 1024,
@@ -86,19 +85,13 @@ class SocketHandler {
         });
       }
     });
-
-    this.healthMonitor.on('fallback_activated', (data) => {
-      console.warn(`🔄 Fallback activated: ${data.component}`);
-      this.io.emit('service_degraded', data);
-    });
   }
 
   /* ================= ERROR LOGGING ================= */
 
   setupErrorLogging() {
     errorLogger.setGlobalContext({
-      component: 'socket_handler',
-      serverId: this.io?.id || 'unknown'
+      component: 'socket_handler'
     });
   }
 
@@ -123,12 +116,10 @@ class SocketHandler {
       throw new Error('❌ TranscriptionAgent is not an EventEmitter instance');
     }
 
-    // 🎤 Transcription → Translation
     transcriptionAgent.on('transcription:partial', async (data) => {
       await this.translationAgent.processTranscription(data.sessionId, data);
     });
 
-    // 🌍 Translation → Frontend
     this.translationAgent.on('translation:partial', (data) => {
       this.io.to(data.sessionId).emit('translation:partial', data);
     });
@@ -144,18 +135,49 @@ class SocketHandler {
     this.io.on('connection', (socket) => {
       console.log(`🔌 Connected: ${socket.id}`);
 
+      /* 🔐 AUTHENTICATION */
       socket.on('authenticate', ({ token }) => {
-        const decoded = verifyToken(token);
+        if (!token) {
+          socket.emit('authentication_error', { message: 'Token missing' });
+          return socket.disconnect(true);
+        }
+
+        let decoded;
+        try {
+          decoded = verifyToken(token);
+        } catch (error) {
+          console.error('❌ Socket JWT error:', error.message);
+
+          socket.emit('authentication_error', {
+            message: 'Invalid or expired token'
+          });
+
+          return socket.disconnect(true);
+        }
+
         socket.userId = decoded.id;
         socket.userRole = decoded.role;
+
         this.connectedUsers.set(decoded.id, socket.id);
-        socket.emit('authenticated', decoded);
+
+        socket.emit('authenticated', {
+          id: decoded.id,
+          email: decoded.email,
+          role: decoded.role
+        });
+
+        console.log(`✅ Socket authenticated: ${decoded.id}`);
       });
 
+      /* ❌ DISCONNECT */
       socket.on('disconnect', async (reason) => {
         console.log(`❌ Disconnected: ${socket.id} (${reason})`);
+
         await this.audioChunkHandler.handleDisconnect(socket);
-        this.connectedUsers.delete(socket.userId);
+
+        if (socket.userId) {
+          this.connectedUsers.delete(socket.userId);
+        }
       });
     });
   }

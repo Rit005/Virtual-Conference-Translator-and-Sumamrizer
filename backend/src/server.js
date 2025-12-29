@@ -149,7 +149,7 @@ app.use((error, req, res, next) => {
 /* SERVER START */
 /* ───────────────────────────────────────────── */
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 server.listen(PORT, () => {
   console.log(`✅ Backend running on http://localhost:${PORT}`);
