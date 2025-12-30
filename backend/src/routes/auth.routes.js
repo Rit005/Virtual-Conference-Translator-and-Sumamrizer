@@ -4,9 +4,8 @@ import { generateToken } from "../utils/jwt.js";
 import {
   signup,
   login,
-  verifyToken,
-  getProfile,
-  verifyEmail
+  verifyEmail,
+  getProfile
 } from "../controllers/auth.controller.js";
 import { authenticate } from "../middleware/auth.js";
 
@@ -19,14 +18,8 @@ router.post("/login", login);
 
 router.get("/verify-email", verifyEmail);
 router.get("/profile", authenticate, getProfile);
-router.get("/verify", authenticate, verifyToken);
 
 /* ================= GOOGLE OAUTH ================= */
-
-router.get(
-  "/google",
-  passport.authenticate("google", { scope: ["profile", "email"] })
-);
 
 router.get(
   "/google",
@@ -38,37 +31,26 @@ router.get(
   passport.authenticate("google", { session: false }),
   (req, res) => {
     const token = generateToken(req.user);
-    res.redirect(`${process.env.CLIENT_URL}/oauth-success?token=${token}`);
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    res.redirect(`${frontendUrl}/oauth-success?token=${token}`);
   }
 );
 
+/* ================= GITHUB OAUTH ================= */
 
-/* ================= GITHUB OAUTH (SAFE GUARD) ================= */
+router.get(
+  "/github",
+  passport.authenticate("github", { scope: ["user:email"] })
+);
 
-router.get("/github", (req, res, next) => {
-  if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
-    return res.status(501).json({
-      success: false,
-      message: "GitHub OAuth not configured"
-    });
-  }
-
-  passport.authenticate("github")(req, res, next);
-});
-
-router.get("/github/callback", (req, res, next) => {
-  if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
-    return res.redirect(
-      `${process.env.FRONTEND_URL || "http://localhost:5173"}/login?error=github_not_configured`
-    );
-  }
-
-  passport.authenticate("github", { session: false })(req, res, () => {
+router.get(
+  "/github/callback",
+  passport.authenticate("github", { session: false }),
+  (req, res) => {
     const token = generateToken(req.user);
-    res.redirect(
-      `${process.env.FRONTEND_URL || "http://localhost:5173"}/oauth-success?token=${token}`
-    );
-  });
-});
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    res.redirect(`${frontendUrl}/oauth-success?token=${token}`);
+  }
+);
 
 export default router;

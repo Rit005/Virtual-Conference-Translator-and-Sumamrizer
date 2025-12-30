@@ -15,41 +15,61 @@ export const authenticate = (req, res, next) => {
       token = req.cookies.token;
     }
 
+    // Debug logging for 400 errors
+    console.log(`🔍 Auth attempt for ${req.method} ${req.originalUrl}`);
+    console.log(`🔑 Token present: ${!!token}`);
+    console.log(`📋 Auth header: ${authHeader}`);
+    console.log(`🍪 Cookie token: ${!!req.cookies?.token}`);
+
     if (!token) {
+      console.log(`❌ No token found for ${req.originalUrl}`);
       return res.status(401).json({
         success: false,
-        message: "No token provided"
+        message: "No token provided",
+        path: req.originalUrl,
+        method: req.method
       });
     }
 
-    const decoded = verifyToken(token);
+    try {
+      const decoded = verifyToken(token);
+      console.log(`✅ Token decoded successfully for user: ${decoded.email}`);
 
-    req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role
-    };
+      req.user = {
+        id: decoded.id,
+        email: decoded.email,
+        role: decoded.role
+      };
 
-    next();
+      next();
+    } catch (tokenError) {
+      console.log(`❌ Token verification failed for ${req.originalUrl}:`, tokenError.message);
+      
+      if (tokenError.name === "TokenExpiredError") {
+        return res.status(401).json({
+          success: false,
+          message: "Token expired",
+          path: req.originalUrl
+        });
+      }
+
+      if (tokenError.name === "JsonWebTokenError") {
+        return res.status(403).json({
+          success: false,
+          message: "Invalid token",
+          path: req.originalUrl
+        });
+      }
+
+      throw tokenError; // Re-throw to be caught by outer catch
+    }
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        success: false,
-        message: "Token expired"
-      });
-    }
-
-    if (error.name === "JsonWebTokenError") {
-      return res.status(403).json({
-        success: false,
-        message: "Invalid token"
-      });
-    }
-
-    console.error("Authentication error:", error);
+    console.error("💥 Authentication error for", req.originalUrl, ":", error);
     return res.status(500).json({
       success: false,
-      message: "Authentication failed"
+      message: "Authentication failed",
+      path: req.originalUrl,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

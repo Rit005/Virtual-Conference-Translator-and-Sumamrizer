@@ -1,5 +1,5 @@
 // API Configuration
-export const API_BASE_URL = 'http://localhost:3002/api';
+export const API_BASE_URL = 'http://localhost:3001/api';
 
 // WebSocket Configuration
 export const WS_BASE_URL = 'ws://localhost:3001';

@@ -14,10 +14,21 @@ class ConferenceService {
    */
   static async createSession(sessionData) {
     try {
+      console.log('Creating session with data:', sessionData);
       const response = await apiClient.post('/conference/create', sessionData);
+      console.log('Session created successfully:', response.data);
       return response.data;
     } catch (error) {
       console.error('Failed to create session:', error);
+      console.error('Error response:', error.response);
+      console.error('Error status:', error.response?.status);
+      console.error('Error data:', error.response?.data);
+      
+      if (error.response?.status === 400) {
+        console.error('Bad Request details:', error.response.data);
+        throw new Error(error.response.data.message || error.response.data.errors || 'Invalid request data');
+      }
+      
       throw new Error(error.response?.data?.message || 'Failed to create session');
     }
   }

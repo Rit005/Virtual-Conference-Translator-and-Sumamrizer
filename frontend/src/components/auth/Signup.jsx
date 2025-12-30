@@ -29,74 +29,91 @@ const Signup = () => {
 
     try {
       const response = await signup(formData);
-      
+      // response === res.data from backend
+
       if (response.success && response.data?.requiresVerification) {
         setUserEmail(formData.email);
         setShowVerificationMessage(true);
-        toast.success("Account created! Please check your email to verify your account.");
-      } else {
-        // Fallback for any edge cases
-        toast.success("Account created successfully! Please login.");
-        navigate("/login");
+        toast.success(
+          "Account created! Please check your email to verify your account."
+        );
+        return;
       }
+
+      // Fallback (should not normally happen)
+      toast.success("Account created successfully! Please login.");
+      navigate("/login");
+
     } catch (error) {
-      console.error('Signup error:', error);
-      toast.error(error.message || "Signup failed. Please try again.");
+      console.error("Signup error:", error);
+      toast.error(
+        error.response?.data?.message ||
+        error.message ||
+        "Signup failed. Please try again."
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Show email verification message
+  /* ================= EMAIL VERIFICATION SCREEN ================= */
+
   if (showVerificationMessage) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="bg-white p-8 rounded-lg shadow-md w-96 text-center">
-          <div className="mb-4">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg
+              className="w-8 h-8 text-green-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
           </div>
-          
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Check Your Email!</h2>
-          
+
+          <h2 className="text-2xl font-bold mb-2">Check Your Email</h2>
           <p className="text-gray-600 mb-2">
-            We've sent a verification email to:
+            We sent a verification link to:
           </p>
-          <p className="text-blue-600 font-semibold mb-4">{userEmail}</p>
-          
-          <p className="text-sm text-gray-600 mb-6">
-            Click the link in the email to verify your account. The link will expire in 24 hours.
+          <p className="font-semibold text-blue-600 mb-4">{userEmail}</p>
+
+          <p className="text-sm text-gray-500 mb-6">
+            Verify your email before logging in.
           </p>
-          
-          <div className="space-y-3">
-            <button
-              onClick={() => navigate("/login")}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition-colors"
-            >
-              Go to Login
-            </button>
-            
-            <button
-              onClick={() => {
-                setShowVerificationMessage(false);
-                setFormData({ name: "", email: "", password: "" });
-              }}
-              className="w-full bg-gray-200 text-gray-800 py-2 px-4 rounded hover:bg-gray-300 transition-colors"
-            >
-              Create Another Account
-            </button>
-          </div>
-          
-          <p className="text-xs text-gray-500 mt-4">
-            Didn't receive the email? Check your spam folder or try signing up again.
+
+          <button
+            onClick={() => navigate("/login")}
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 mb-3"
+          >
+            Go to Login
+          </button>
+
+          <button
+            onClick={() => {
+              setShowVerificationMessage(false);
+              setFormData({ name: "", email: "", password: "" });
+            }}
+            className="w-full bg-gray-200 py-2 rounded hover:bg-gray-300"
+          >
+            Create Another Account
+          </button>
+
+          <p className="text-xs text-gray-400 mt-4">
+            Didn’t receive the email? Check spam folder.
           </p>
         </div>
       </div>
     );
   }
+
+  /* ================= SIGNUP FORM ================= */
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -113,7 +130,7 @@ const Signup = () => {
           required
           value={formData.name}
           onChange={handleChange}
-          className="w-full p-3 mb-3 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full p-3 mb-3 border rounded"
           disabled={isLoading}
         />
 
@@ -124,46 +141,36 @@ const Signup = () => {
           required
           value={formData.email}
           onChange={handleChange}
-          className="w-full p-3 mb-3 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full p-3 mb-3 border rounded"
           disabled={isLoading}
         />
 
         <input
           type="password"
           name="password"
-          placeholder="Password (minimum 6 characters)"
+          placeholder="Password (min 6 chars)"
           required
           minLength="6"
           value={formData.password}
           onChange={handleChange}
-          className="w-full p-3 mb-4 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full p-3 mb-4 border rounded"
           disabled={isLoading}
         />
 
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-blue-600 text-white py-3 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="w-full bg-blue-600 text-white py-3 rounded hover:bg-blue-700 disabled:opacity-50"
         >
-          {isLoading ? (
-            <div className="flex items-center justify-center">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-              Creating Account...
-            </div>
-          ) : (
-            "Sign Up"
-          )}
+          {isLoading ? "Creating Account..." : "Sign Up"}
         </button>
 
-        <div className="mt-6 pt-4 border-t border-gray-200">
-          <p className="text-sm text-gray-600 text-center mb-3">
+        <div className="mt-4 text-center">
+          <p className="text-sm text-gray-600">
             Already have an account?
           </p>
-          <Link 
-            to="/login" 
-            className="block text-center text-blue-600 hover:text-blue-800 font-medium"
-          >
-            Login Here
+          <Link to="/login" className="text-blue-600 font-medium">
+            Login here
           </Link>
         </div>
       </form>

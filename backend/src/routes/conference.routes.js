@@ -7,6 +7,7 @@
 import express from 'express';
 import ConferenceController from '../controllers/conference.controller.js';
 import { authenticate } from '../middleware/auth.js';
+import { validate, sessionSchemas } from '../middleware/validation.js';
 
 const router = express.Router();
 
@@ -14,16 +15,28 @@ const router = express.Router();
 router.use(authenticate);
 
 // Create a new conference session
-router.post('/create', ConferenceController.createSession);
+router.post('/create', 
+  validate(sessionSchemas.create),
+  ConferenceController.createSession
+);
 
 // Join an existing conference session
-router.post('/join/:sessionId', ConferenceController.joinSession);
+router.post('/join/:sessionId', 
+  validate(sessionSchemas.join, 'params'),
+  ConferenceController.joinSession
+);
 
 // Leave a conference session
-router.post('/leave/:sessionId', ConferenceController.leaveSession);
+router.post('/leave/:sessionId', 
+  validate(sessionSchemas.join, 'params'),
+  ConferenceController.leaveSession
+);
 
 // Get session details
-router.get('/session/:sessionId', ConferenceController.getSession);
+router.get('/session/:sessionId', 
+  validate(sessionSchemas.join, 'params'),
+  ConferenceController.getSession
+);
 
 // Get user's hosted sessions
 router.get('/my-sessions', ConferenceController.getUserSessions);

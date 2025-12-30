@@ -1,7 +1,7 @@
 import axios from "./apiClient";
 import { jwtDecode } from "jwt-decode";
 
-const TOKEN_KEY = "vc_token";
+const TOKEN_KEY = "auth_token";
 
 export const authService = {
   setToken(token) {
