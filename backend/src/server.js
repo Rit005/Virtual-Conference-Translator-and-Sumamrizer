@@ -38,6 +38,15 @@ const app = express();
 const server = createServer(app);
 
 /* ───────────────────────────────────────────── */
+/* ALLOWED FRONTEND ORIGINS (🔥 IMPORTANT FIX) */
+/* ───────────────────────────────────────────── */
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5182"
+];
+
+/* ───────────────────────────────────────────── */
 /* SECURITY & MIDDLEWARE */
 /* ───────────────────────────────────────────── */
 
@@ -54,9 +63,19 @@ app.use(
   })
 );
 
+/* ✅ FIXED CORS */
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: function (origin, callback) {
+      // Allow requests with no origin (Postman, curl)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
@@ -72,12 +91,12 @@ if (process.env.NODE_ENV !== "test") {
 app.use(passport.initialize());
 
 /* ───────────────────────────────────────────── */
-/* SOCKET.IO */
+/* SOCKET.IO (✅ FIXED) */
 /* ───────────────────────────────────────────── */
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: allowedOrigins,
     credentials: true,
   },
   transports: ["websocket", "polling"],
@@ -149,7 +168,7 @@ app.use((error, req, res, next) => {
 /* SERVER START */
 /* ───────────────────────────────────────────── */
 
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
   console.log(`✅ Backend running on http://localhost:${PORT}`);
