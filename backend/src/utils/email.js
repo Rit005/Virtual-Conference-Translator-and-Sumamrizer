@@ -1,159 +1,135 @@
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 
-// Email configuration
-const getEmailConfig = () => {
-  return {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  };
-};
+/* ───────────────────────────────────────────── */
+/* EMAIL CONFIG                                  */
+/* ───────────────────────────────────────────── */
 
-// Create email transporter
-const transporter = nodemailer.createTransport(getEmailConfig());
+const getEmailConfig = () => ({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: process.env.SMTP_SECURE === 'true', // false for Gmail (587)
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
-/**
- * Generate secure verification token
- */
-export const generateVerificationToken = () => {
-  return crypto.randomBytes(32).toString('hex');
-};
+/* ───────────────────────────────────────────── */
+/* TRANSPORTER                                  */
+/* ───────────────────────────────────────────── */
 
-/**
- * Generate verification email template
- */
-const generateVerificationEmail = (name, verificationUrl) => {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Email Verification</title>
-      <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-        .content { background: #f8f9fa; padding: 30px; }
-        .button { display: inline-block; background: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-        .footer { background: #e9ecef; padding: 20px; text-align: center; border-radius: 0 0 10px 10px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>🚀 Virtual Conference</h1>
-          <p>Welcome to our platform!</p>
-        </div>
-        <div class="content">
-          <h2>Hi ${name},</h2>
-          <p>Thank you for signing up for Virtual Conference Translator & Summarizer!</p>
-          <p>To complete your registration, please verify your email address by clicking the button below:</p>
-          <div style="text-align: center;">
-            <a href="${verificationUrl}" class="button">Verify Email Address</a>
-          </div>
-          <p>Or copy and paste this link into your browser:</p>
-          <p style="word-break: break-all; color: #007bff;">${verificationUrl}</p>
-          <p><strong>Note:</strong> This verification link will expire in 24 hours.</p>
-        </div>
-        <div class="footer">
-          <p>If you didn't create an account with us, please ignore this email.</p>
-          <p>&copy; 2024 Virtual Conference Team. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-};
+export const transporter = nodemailer.createTransport(getEmailConfig());
 
-/**
- * Send verification email
- */
-export const sendVerificationEmail = async (email, name, verificationToken) => {
+// ✅ Verify transporter on startup
+transporter.verify((error, success) => {
+  if (error) {
+    console.error('❌ SMTP configuration error:', error.message);
+  } else {
+    console.log('📧 SMTP server is ready to send emails');
+  }
+});
+
+/* ───────────────────────────────────────────── */
+/* TOKEN GENERATION                              */
+/* ───────────────────────────────────────────── */
+
+export const generateVerificationToken = () =>
+  crypto.randomBytes(32).toString('hex');
+
+/* ───────────────────────────────────────────── */
+/* EMAIL TEMPLATES                               */
+/* ───────────────────────────────────────────── */
+
+const generateVerificationEmail = (name, verificationUrl) => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Email Verification</title>
+</head>
+<body style="font-family: Arial, sans-serif; background:#f4f4f4; padding:20px;">
+  <div style="max-width:600px;margin:auto;background:#ffffff;padding:20px;border-radius:8px;">
+    <h2>Hi ${name}, 👋</h2>
+    <p>Welcome to <b>Virtual Conference Translator & Summarizer</b>.</p>
+    <p>Please verify your email by clicking the button below:</p>
+
+    <p style="text-align:center;">
+      <a href="${verificationUrl}"
+         style="display:inline-block;padding:12px 24px;background:#2563eb;color:#ffffff;
+                text-decoration:none;border-radius:6px;">
+        Verify Email
+      </a>
+    </p>
+
+    <p>If the button doesn’t work, copy this link:</p>
+    <p style="word-break: break-all;">${verificationUrl}</p>
+
+    <p><b>Note:</b> This link expires in 24 hours.</p>
+
+    <hr />
+    <p style="font-size:12px;color:#777;">
+      If you didn’t create this account, ignore this email.
+    </p>
+  </div>
+</body>
+</html>
+`;
+
+/* ───────────────────────────────────────────── */
+/* SEND VERIFICATION EMAIL                       */
+/* ───────────────────────────────────────────── */
+
+export const sendVerificationEmail = async (email, name, token) => {
+  const verificationUrl =
+    `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${token}`;
+
   try {
-    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${verificationToken}`;
-    
-    const mailOptions = {
-      from: {
-        name: 'Virtual Conference Team',
-        address: process.env.SMTP_USER || 'noreply@virtualconference.com'
-      },
+    await transporter.sendMail({
+      from: `"Virtual Conference" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: 'Verify Your Email - Virtual Conference',
+      subject: 'Verify your email',
       html: generateVerificationEmail(name, verificationUrl),
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
-    console.log(`✅ Verification email sent to ${email}`);
+    console.log(`✅ Verification email sent → ${email}`);
+    console.log(`🔗 Verify link (DEV): ${verificationUrl}`);
+
     return true;
   } catch (error) {
-    console.error('❌ Error sending verification email:', error);
-    throw new Error('Failed to send verification email');
+    console.error('❌ Failed to send verification email');
+    console.error(error.message);
+
+    // 🔥 Demo-safe fallback
+    console.log('⚠️ EMAIL FALLBACK (FOR DEMO)');
+    console.log(`🔗 Verify manually: ${verificationUrl}`);
+
+    return false;
   }
 };
 
-/**
- * Send welcome email (for OAuth users)
- */
+/* ───────────────────────────────────────────── */
+/* SEND WELCOME EMAIL (OAUTH)                    */
+/* ───────────────────────────────────────────── */
+
 export const sendWelcomeEmail = async (email, name, provider) => {
   try {
-    const mailOptions = {
-      from: {
-        name: 'Virtual Conference Team',
-        address: process.env.SMTP_USER || 'noreply@virtualconference.com'
-      },
+    await transporter.sendMail({
+      from: `"Virtual Conference" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: 'Welcome to Virtual Conference!',
+      subject: 'Welcome to Virtual Conference 🎉',
       html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <title>Welcome</title>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f8f9fa; padding: 30px; }
-            .footer { background: #e9ecef; padding: 20px; text-align: center; border-radius: 0 0 10px 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🚀 Welcome to Virtual Conference!</h1>
-            </div>
-            <div class="content">
-              <h2>Hi ${name},</h2>
-              <p>Welcome to Virtual Conference Translator & Summarizer! 🎉</p>
-              <p>You've successfully signed up using your ${provider} account.</p>
-              <p>You can now:</p>
-              <ul>
-                <li>Join conference sessions</li>
-                <li>Participate in real-time discussions</li>
-                <li>Get AI-powered summaries and translations</li>
-                <li>Connect with participants worldwide</li>
-              </ul>
-            </div>
-            <div class="footer">
-              <p>&copy; 2024 Virtual Conference Team. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-        </html>
+        <h2>Welcome ${name}!</h2>
+        <p>You signed up using <b>${provider}</b>.</p>
+        <p>You can now join live conferences with real-time captions & summaries.</p>
       `,
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
-    console.log(`✅ Welcome email sent to ${email}`);
+    console.log(`✅ Welcome email sent → ${email}`);
     return true;
   } catch (error) {
-    console.error('❌ Error sending welcome email:', error);
-    throw new Error('Failed to send welcome email');
+    console.error('❌ Failed to send welcome email:', error.message);
+    return false;
   }
 };
 
