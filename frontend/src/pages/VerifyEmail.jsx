@@ -1,37 +1,38 @@
-import { useSearchParams, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import axios from "axios";
+import toast from "react-hot-toast";
 
 const VerifyEmail = () => {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-
-  const status = params.get("status");
+  const [status, setStatus] = useState("loading");
 
   useEffect(() => {
-    if (status === "success") {
-      setTimeout(() => navigate("/login?verified=true"), 2000);
-    }
-  }, [status, navigate]);
+    const token = params.get("token");
+    if (!token) return setStatus("error");
+
+    const verify = async () => {
+      try {
+        const backend = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+        await axios.get(`${backend}/api/auth/verify-email?token=${token}`);
+        setStatus("success");
+        toast.success("Email verified!");
+
+        setTimeout(() => navigate("/login?verified=true"), 2000);
+      } catch {
+        setStatus("error");
+      }
+    };
+
+    verify();
+  }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center">
-      <div className="p-6 bg-white shadow rounded text-center">
-        {status === "success" && (
-          <>
-            <h2 className="text-green-600 text-xl">✅ Email Verified</h2>
-            <p>Redirecting to login...</p>
-          </>
-        )}
-
-        {status !== "success" && (
-          <>
-            <h2 className="text-red-600 text-xl">❌ Verification Failed</h2>
-            <button onClick={() => navigate("/login")}>
-              Go to Login
-            </button>
-          </>
-        )}
-      </div>
+      {status === "loading" && <p>Verifying...</p>}
+      {status === "success" && <p>✅ Verified! Redirecting...</p>}
+      {status === "error" && <p>❌ Verification Failed</p>}
     </div>
   );
 };

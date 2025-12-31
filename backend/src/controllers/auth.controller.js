@@ -9,109 +9,98 @@ import {
 
 /* ================= SIGNUP ================= */
 
-const signup = async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
+export const signup = async (req, res) => {
+  const { name, email, password } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "All fields are required",
-      });
-    }
-
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
-      return res.status(400).json({
-        success: false,
-        message: "User already exists",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const verificationToken = generateVerificationToken();
-
-    await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        provider: "LOCAL",
-        role: "VIEWER",
-        isVerified: false,
-        verificationToken,
-      },
-    });
-
-    await sendVerificationEmail(email, name, verificationToken);
-
-    return res.status(201).json({
-      success: true,
-      message: "Signup successful. Please verify your email.",
-      data: { requiresVerification: true },
-    });
-  } catch (error) {
-    console.error("Signup error:", error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+  if (!name || !email || !password) {
+    return res.status(400).json({ success: false, message: "All fields required" });
   }
+
+  const exists = await prisma.user.findUnique({ where: { email } });
+  if (exists) {
+    return res.status(400).json({ success: false, message: "User already exists" });
+  }
+
+  const hashed = await bcrypt.hash(password, 10);
+  const verificationToken = generateVerificationToken();
+
+  await prisma.user.create({
+    data: {
+      name,
+      email,
+      password: hashed,
+      role: "VIEWER",
+      provider: "LOCAL",
+      isVerified: false,
+      verificationToken,
+    },
+  });
+
+  await sendVerificationEmail(email, name, verificationToken);
+
+  return res.status(201).json({
+    success: true,
+    message: "Signup successful. Verify your email.",
+    data: { requiresVerification: true },
+  });
 };
 
 /* ================= LOGIN ================= */
 
-const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+export const login = async (req, res) => {
+  const { email, password } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({ where: { email } });
 
-    if (!user || !user.password) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-
-    if (!user.isVerified) {
-      return res.status(401).json({
-        success: false,
-        message: "Please verify your email before logging in",
-      });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-
-    const token = generateToken(user);
-
-    res.json({
-      success: true,
-      token,
-      user,
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+  if (!user || !user.password) {
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
   }
+
+  if (!user.isVerified) {
+    return res.status(401).json({
+      success: false,
+      code: "EMAIL_NOT_VERIFIED",
+      message: "Please verify your email before login",
+    });
+  }
+
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) {
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
+  }
+
+  const token = generateToken(user);
+
+  return res.json({
+    success: true,
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
+  });
 };
 
-/* ================= VERIFY EMAIL ================= */
+/* ================= VERIFY EMAIL (🔥 FIXED) ================= */
 
-const verifyEmail = async (req, res) => {
+export const verifyEmail = async (req, res) => {
   const { token } = req.query;
+
+  if (!token) {
+    return res.status(400).json({ success: false, message: "Token missing" });
+  }
 
   const user = await prisma.user.findFirst({
     where: { verificationToken: token },
   });
 
   if (!user) {
-    return res.redirect(
-      `${process.env.FRONTEND_URL}/verify-email?status=error`
-    );
+    return res.status(400).json({
+      success: false,
+      message: "Invalid or expired verification link",
+    });
   }
 
   await prisma.user.update({
@@ -122,65 +111,49 @@ const verifyEmail = async (req, res) => {
     },
   });
 
-  return res.redirect(
-    `${process.env.FRONTEND_URL}/verify-email?status=success`
-  );
+  // ✅ IMPORTANT: NO REDIRECT
+  return res.json({
+    success: true,
+    message: "Email verified successfully",
+  });
 };
 
-/* ================= PROFILE (🔥 MISSING EXPORT FIXED) ================= */
+/* ================= PROFILE ================= */
 
-const getProfile = async (req, res) => {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        provider: true,
-        isVerified: true,
-      },
-    });
+export const getProfile = async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isVerified: true,
+    },
+  });
 
-    res.json({ success: true, user });
-  } catch (error) {
-    console.error("Get profile error:", error);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
+  res.json({ success: true, user });
 };
 
 /* ================= OAUTH ================= */
 
-const handleOAuthUser = async (profile, provider) => {
+export const handleOAuthUser = async (profile, provider) => {
   const email = profile.emails[0].value;
-  const name = profile.displayName || email.split("@")[0];
-
   let user = await prisma.user.findUnique({ where: { email } });
 
   if (!user) {
     user = await prisma.user.create({
       data: {
-        name,
+        name: profile.displayName,
         email,
-        provider: provider.toUpperCase(),
+        provider,
         role: "VIEWER",
         isVerified: true,
       },
     });
 
-    await sendWelcomeEmail(email, name, provider);
+    await sendWelcomeEmail(email, user.name, provider);
   }
 
   return user;
-};
-
-/* ================= ✅ EXPORTS ================= */
-
-export {
-  signup,
-  login,
-  verifyEmail,
-  getProfile,
-  handleOAuthUser,
 };
