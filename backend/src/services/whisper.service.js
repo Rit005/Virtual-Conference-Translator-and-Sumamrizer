@@ -1,152 +1,116 @@
 /**
- * Whisper ASR Service (Production Safe)
+ * Whisper ASR Service (REAL + PRODUCTION SAFE)
  * Compatible with TranscriptionAgentRefined
  */
 
 import OpenAI from "openai";
-import { Readable } from "stream";
+import fs from "fs";
+import path from "path";
 import ASRService from "./asrService.js";
 
 class WhisperASRService extends ASRService {
   constructor(config = {}) {
-    super({
-      maxAudioSize: 25 * 1024 * 1024,
-      ...config
-    });
+    super(config);
 
     this.config = {
-      apiKey: process.env.OPENAI_API_KEY || null,
+      apiKey: process.env.OPENAI_API_KEY,
       model: "whisper-1",
-      timeout: 30000,
-      maxRetries: 2,
-      retryDelay: 1000,
+      sampleRate: 16000,
       ...config
     };
 
-    this.openai = null;
+    this.client = null;
     this.initialized = false;
   }
 
-  /* ================= INITIALIZATION ================= */
+  /* ================= INIT ================= */
 
   async initialize() {
     if (!this.config.apiKey) {
-      console.warn("⚠️ Whisper running in MOCK mode (no API key)");
+      console.warn("⚠️ Whisper MOCK MODE (no API key)");
       this.initialized = true;
-      return true;
+      return;
     }
 
-    try {
-      this.openai = new OpenAI({
-        apiKey: this.config.apiKey,
-        timeout: this.config.timeout
-      });
+    this.client = new OpenAI({
+      apiKey: this.config.apiKey
+    });
 
-      this.initialized = true;
-      console.log("✅ WhisperService initialized");
-      return true;
-    } catch (err) {
-      console.error("❌ Whisper init failed:", err.message);
-      this.initialized = false;
-      return false;
-    }
+    this.initialized = true;
+    console.log("✅ Whisper service initialized");
   }
 
-  /* ================= VALIDATION ================= */
+  /* ================= PCM → WAV ================= */
 
-  validateAudioFormat(audioData) {
-    if (!audioData) {
-      return { valid: false, errors: ["Missing audio data"] };
+  pcmToWav(float32Array) {
+    const buffer = Buffer.alloc(44 + float32Array.length * 2);
+
+    // RIFF header
+    buffer.write("RIFF", 0);
+    buffer.writeUInt32LE(36 + float32Array.length * 2, 4);
+    buffer.write("WAVE", 8);
+
+    // fmt chunk
+    buffer.write("fmt ", 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(1, 22);
+    buffer.writeUInt32LE(this.config.sampleRate, 24);
+    buffer.writeUInt32LE(this.config.sampleRate * 2, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34);
+
+    // data chunk
+    buffer.write("data", 36);
+    buffer.writeUInt32LE(float32Array.length * 2, 40);
+
+    let offset = 44;
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      buffer.writeInt16LE(s * 32767, offset);
+      offset += 2;
     }
 
-    const size = Buffer.isBuffer(audioData)
-      ? audioData.length
-      : Buffer.byteLength(audioData, "base64");
-
-    if (size > this.config.maxAudioSize) {
-      return {
-        valid: false,
-        errors: [`Audio size exceeds ${this.config.maxAudioSize} bytes`]
-      };
-    }
-
-    return { valid: true, size };
+    return buffer;
   }
 
-  /* ================= TRANSCRIPTION ================= */
+  /* ================= TRANSCRIBE ================= */
 
-  async transcribe(audioData, options = {}) {
-    if (!this.initialized) {
-      throw new Error("WhisperService not initialized");
-    }
+  async transcribe(float32Audio) {
+    if (!this.initialized) throw new Error("Whisper not initialized");
 
-    /** 🔁 MOCK MODE */
     if (!this.config.apiKey) {
       return {
-        text: "Mock transcription (Whisper not configured)",
-        language: options.language || "en",
-        confidence: 0.95,
-        isFinal: false,
-        duration: 2,
-        metadata: { provider: "mock-whisper" }
+        text: "Mock transcription",
+        isFinal: true
       };
     }
 
-    const audioBuffer = Buffer.isBuffer(audioData)
-      ? audioData
-      : Buffer.from(audioData, "base64");
+    const wavBuffer = this.pcmToWav(float32Audio);
+    const filePath = path.join("/tmp", `audio-${Date.now()}.wav`);
 
-    const audioStream = Readable.from(audioBuffer);
+    fs.writeFileSync(filePath, wavBuffer);
 
-    let lastError;
+    try {
+      const response = await this.client.audio.transcriptions.create({
+        file: fs.createReadStream(filePath),
+        model: this.config.model
+      });
 
-    for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
-      try {
-        const response = await this.openai.audio.transcriptions.create({
-          file: audioStream,
-          model: this.config.model,
-          language: options.language,
-          response_format: "verbose_json"
-        });
-
-        return {
-          text: response.text,
-          language: response.language || options.language || "en",
-          confidence: this.estimateConfidence(response.text),
-          isFinal: true,
-          duration: response.duration || 0,
-          metadata: {
-            provider: "openai-whisper",
-            attempt
-          }
-        };
-      } catch (err) {
-        lastError = err;
-        await new Promise(r => setTimeout(r, this.config.retryDelay));
-      }
+      return {
+        text: response.text,
+        isFinal: true
+      };
+    } finally {
+      fs.unlinkSync(filePath);
     }
-
-    throw lastError;
-  }
-
-  /* ================= CONFIDENCE ================= */
-
-  estimateConfidence(text = "") {
-    if (!text.trim()) return 0;
-
-    let score = 0.6;
-    if (text.length > 40) score += 0.2;
-    if (/[.!?]/.test(text)) score += 0.1;
-    if (text.length < 10) score -= 0.3;
-
-    return Math.min(1, Math.max(0, score));
   }
 
   /* ================= CLEANUP ================= */
 
   async cleanup() {
     this.initialized = false;
-    this.openai = null;
+    this.client = null;
   }
 }
 
