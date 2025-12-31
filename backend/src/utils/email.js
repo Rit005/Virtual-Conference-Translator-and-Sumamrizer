@@ -1,14 +1,14 @@
-import nodemailer from 'nodemailer';
-import crypto from 'crypto';
+import nodemailer from "nodemailer";
+import crypto from "crypto";
 
 /* ───────────────────────────────────────────── */
 /* EMAIL CONFIG                                  */
 /* ───────────────────────────────────────────── */
 
 const getEmailConfig = () => ({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
   port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === 'true', // false for Gmail (587)
+  secure: process.env.SMTP_SECURE === "true", // false for Gmail
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
@@ -16,17 +16,17 @@ const getEmailConfig = () => ({
 });
 
 /* ───────────────────────────────────────────── */
-/* TRANSPORTER                                  */
+/* TRANSPORTER                                   */
 /* ───────────────────────────────────────────── */
 
 export const transporter = nodemailer.createTransport(getEmailConfig());
 
 // ✅ Verify transporter on startup
-transporter.verify((error, success) => {
+transporter.verify((error) => {
   if (error) {
-    console.error('❌ SMTP configuration error:', error.message);
+    console.error("❌ SMTP configuration error:", error.message);
   } else {
-    console.log('📧 SMTP server is ready to send emails');
+    console.log("📧 SMTP server is ready to send emails");
   }
 });
 
@@ -35,10 +35,10 @@ transporter.verify((error, success) => {
 /* ───────────────────────────────────────────── */
 
 export const generateVerificationToken = () =>
-  crypto.randomBytes(32).toString('hex');
+  crypto.randomBytes(32).toString("hex");
 
 /* ───────────────────────────────────────────── */
-/* EMAIL TEMPLATES                               */
+/* EMAIL TEMPLATE                                */
 /* ───────────────────────────────────────────── */
 
 const generateVerificationEmail = (name, verificationUrl) => `
@@ -81,14 +81,19 @@ const generateVerificationEmail = (name, verificationUrl) => `
 /* ───────────────────────────────────────────── */
 
 export const sendVerificationEmail = async (email, name, token) => {
-  const verificationUrl =
-    `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${token}`;
-
   try {
+    if (!token) throw new Error("Verification token missing");
+
+    const frontendUrl =
+      process.env.FRONTEND_URL || "http://localhost:5173";
+
+    // ✅ SINGLE CORRECT VARIABLE
+    const verificationUrl = `${frontendUrl}/verify-email?token=${token}`;
+
     await transporter.sendMail({
       from: `"Virtual Conference" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: 'Verify your email',
+      subject: "Verify your email",
       html: generateVerificationEmail(name, verificationUrl),
     });
 
@@ -97,11 +102,10 @@ export const sendVerificationEmail = async (email, name, token) => {
 
     return true;
   } catch (error) {
-    console.error('❌ Failed to send verification email');
-    console.error(error.message);
+    console.error("❌ Failed to send verification email:", error.message);
 
-    // 🔥 Demo-safe fallback
-    console.log('⚠️ EMAIL FALLBACK (FOR DEMO)');
+    // 🔥 DEMO FALLBACK
+    console.log("⚠️ EMAIL FALLBACK (FOR DEMO)");
     console.log(`🔗 Verify manually: ${verificationUrl}`);
 
     return false;
@@ -117,7 +121,7 @@ export const sendWelcomeEmail = async (email, name, provider) => {
     await transporter.sendMail({
       from: `"Virtual Conference" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: 'Welcome to Virtual Conference 🎉',
+      subject: "Welcome to Virtual Conference 🎉",
       html: `
         <h2>Welcome ${name}!</h2>
         <p>You signed up using <b>${provider}</b>.</p>
@@ -128,7 +132,7 @@ export const sendWelcomeEmail = async (email, name, provider) => {
     console.log(`✅ Welcome email sent → ${email}`);
     return true;
   } catch (error) {
-    console.error('❌ Failed to send welcome email:', error.message);
+    console.error("❌ Failed to send welcome email:", error.message);
     return false;
   }
 };
