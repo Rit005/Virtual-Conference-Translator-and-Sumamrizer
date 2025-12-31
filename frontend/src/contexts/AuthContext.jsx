@@ -2,10 +2,10 @@ import React, { useState, useEffect, createContext, useContext } from "react";
 import { authService } from "../services/authService";
 import toast from "react-hot-toast";
 
-// Create context
+/* ================= CREATE CONTEXT ================= */
 const AuthContext = createContext();
 
-// Custom hook
+/* ================= CUSTOM HOOK ================= */
 const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
@@ -14,12 +14,13 @@ const useAuth = () => {
   return context;
 };
 
+/* ================= PROVIDER ================= */
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  /* ================= INITIALIZE AUTH ================= */
+  /* ================= INIT AUTH ================= */
   useEffect(() => {
     try {
       const currentUser = authService.getCurrentUser();
@@ -39,6 +40,7 @@ const AuthProvider = ({ children }) => {
   const login = async (data) => {
     try {
       setLoading(true);
+
       const result = await authService.login(data);
 
       if (result.success) {
@@ -48,14 +50,27 @@ const AuthProvider = ({ children }) => {
         return { success: true };
       }
 
-      return { success: false, error: result.message };
+      return {
+        success: false,
+        error: result.message || "Login failed",
+      };
     } catch (error) {
-      // ✅ IMPORTANT FIX: show backend error message
-      const backendMessage =
-        error.response?.data?.message ||
-        "Login failed. Please try again.";
+      const response = error?.response?.data;
 
-      return { success: false, error: backendMessage };
+      // 🔥 EMAIL NOT VERIFIED HANDLING
+      if (response?.code === "EMAIL_NOT_VERIFIED") {
+        return {
+          success: false,
+          error: "Please verify your email before logging in.",
+        };
+      }
+
+      return {
+        success: false,
+        error:
+          response?.message ||
+          "Invalid email or password",
+      };
     } finally {
       setLoading(false);
     }
@@ -65,14 +80,15 @@ const AuthProvider = ({ children }) => {
   const loginWithOAuth = async (token) => {
     try {
       setLoading(true);
-      authService.setToken(token);
 
-      const user = authService.getCurrentUser();
-      if (!user) {
+      authService.setToken(token);
+      const decodedUser = authService.getCurrentUser();
+
+      if (!decodedUser) {
         throw new Error("Invalid OAuth token");
       }
 
-      setUser(user);
+      setUser(decodedUser);
       setIsAuthenticated(true);
       toast.success("Login successful!");
       return { success: true };
@@ -91,6 +107,7 @@ const AuthProvider = ({ children }) => {
   const signup = async (data) => {
     try {
       setLoading(true);
+
       const result = await authService.signup(data);
 
       // Email verification flow
@@ -114,11 +131,16 @@ const AuthProvider = ({ children }) => {
         message: result.message,
       };
     } catch (error) {
-      const backendMessage =
-        error.response?.data?.message ||
-        "Signup failed. Please try again.";
-      toast.error(backendMessage);
-      return { success: false, error: backendMessage };
+      const response = error?.response?.data;
+
+      toast.error(
+        response?.message || "Signup failed. Please try again."
+      );
+
+      return {
+        success: false,
+        error: response?.message,
+      };
     } finally {
       setLoading(false);
     }

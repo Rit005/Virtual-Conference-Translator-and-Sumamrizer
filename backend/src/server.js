@@ -10,18 +10,11 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 
 import "./config/passport.js";
-
-// Load environment variables
-dotenv.config();
-
-// Database
 import { prisma } from "./prismaClient.js";
 
-// 🔥 AGENTS
+// Agents
 import TranscriptionAgent from "./agents/transcriptionAgentRefined.js";
 import WhisperASRService from "./services/whisper.service.js";
-
-// Socket handler
 import SocketHandler from "./socket/socket.handler.js";
 
 // Routes
@@ -31,26 +24,32 @@ import { router as summaryRoutes } from "./routes/summary.routes.js";
 import conferenceRoutes from "./routes/conference.routes.js";
 
 /* ───────────────────────────────────────────── */
-/* APP & SERVER SETUP */
+/* ENV */
 /* ───────────────────────────────────────────── */
+dotenv.config();
 
+/* ───────────────────────────────────────────── */
+/* APP SETUP */
+/* ───────────────────────────────────────────── */
 const app = express();
 const server = createServer(app);
 
 /* ───────────────────────────────────────────── */
-/* ALLOWED FRONTEND ORIGINS (🔥 IMPORTANT FIX) */
+/* ✅ ALLOWED ORIGINS (FIXED) */
 /* ───────────────────────────────────────────── */
-
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  "http://localhost:5180",
+  "http://localhost:5181",
   "http://localhost:5182",
-  "http://frontend:80"
+  "http://localhost:5183",
 ];
 
 /* ───────────────────────────────────────────── */
-/* SECURITY & MIDDLEWARE */
+/* SECURITY */
 /* ───────────────────────────────────────────── */
-
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -60,53 +59,64 @@ app.use(
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 200,
   })
 );
 
-/* ✅ FIXED CORS */
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (Postman, curl)
-      if (!origin) return callback(null, true);
+/* ───────────────────────────────────────────── */
+/* ✅ CORS (🔥 FULL FIX) */
+/* ───────────────────────────────────────────── */
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow Postman / curl
+    if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-  })
-);
+    console.error("❌ Blocked by CORS:", origin);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+  ],
+};
 
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // 🔥 VERY IMPORTANT
+
+/* ───────────────────────────────────────────── */
+/* BODY & COOKIES */
+/* ───────────────────────────────────────────── */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
 if (process.env.NODE_ENV !== "test") {
-  app.use(morgan("combined"));
+  app.use(morgan("dev"));
 }
 
 app.use(passport.initialize());
 
 /* ───────────────────────────────────────────── */
-/* SOCKET.IO (✅ FIXED) */
+/* SOCKET.IO (CORS SYNCED) */
 /* ───────────────────────────────────────────── */
-
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
     credentials: true,
+    methods: ["GET", "POST"],
   },
-  transports: ["websocket", "polling"],
 });
 
 /* ───────────────────────────────────────────── */
-/* 🔥 TRANSCRIPTION AGENT INITIALIZATION */
+/* TRANSCRIPTION AGENT */
 /* ───────────────────────────────────────────── */
-
 const asrService = new WhisperASRService({
   apiKey: process.env.OPENAI_API_KEY || "mock",
 });
@@ -121,7 +131,6 @@ await transcriptionAgent.initialize();
 /* ───────────────────────────────────────────── */
 /* SOCKET HANDLER */
 /* ───────────────────────────────────────────── */
-
 const socketHandler = new SocketHandler(io, transcriptionAgent);
 await socketHandler.initialize();
 
@@ -130,7 +139,6 @@ console.log("✅ Socket.IO + Agents initialized");
 /* ───────────────────────────────────────────── */
 /* ROUTES */
 /* ───────────────────────────────────────────── */
-
 app.get("/health", (req, res) => {
   res.json({
     status: "OK",
@@ -145,9 +153,8 @@ app.use("/api/summary", summaryRoutes);
 app.use("/api/conference", conferenceRoutes);
 
 /* ───────────────────────────────────────────── */
-/* ERROR HANDLING */
+/* 404 */
 /* ───────────────────────────────────────────── */
-
 app.use("*", (req, res) => {
   res.status(404).json({
     success: false,
@@ -155,34 +162,33 @@ app.use("*", (req, res) => {
   });
 });
 
-app.use((error, req, res, next) => {
-  console.error("Global error:", error);
+/* ───────────────────────────────────────────── */
+/* ERROR HANDLER */
+/* ───────────────────────────────────────────── */
+app.use((err, req, res, next) => {
+  console.error("🔥 Global error:", err);
 
-  res.status(error.status || 500).json({
+  res.status(err.status || 500).json({
     success: false,
-    message: error.message || "Internal server error",
-    ...(process.env.NODE_ENV === "development" && { stack: error.stack }),
+    message: err.message || "Internal server error",
   });
 });
 
 /* ───────────────────────────────────────────── */
-/* SERVER START */
+/* START SERVER */
 /* ───────────────────────────────────────────── */
-
 const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
   console.log(`✅ Backend running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🔌 Socket.IO enabled`);
 });
 
 /* ───────────────────────────────────────────── */
-/* GRACEFUL SHUTDOWN */
+/* SHUTDOWN */
 /* ───────────────────────────────────────────── */
-
 const shutdown = async () => {
-  console.log("🔴 Shutting down gracefully...");
+  console.log("🔴 Graceful shutdown...");
   await transcriptionAgent.shutdown();
   await prisma.$disconnect();
   process.exit(0);
@@ -190,8 +196,3 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled rejection:", reason);
-});
-
-export { app, server, prisma };
