@@ -32,24 +32,17 @@ Create, join, and manage conference sessions with participant tracking.
 
 ---
 
-## 🧠 System Architecture
+## 🏗️ System Architecture
 
-### High-Level Flow
+Frontend: React-based UI for live captions, chat, and session controls
 
-Browser Microphone
-↓
-Audio Streaming (WebSocket)
-↓
-Transcription Agent
-↓
-Whisper ASR Service
-↓
-Live Captions (Frontend)
-↓
-Summary Generator
+Backend: Node.js & Express API for authentication, session management, and AI orchestration
 
-yaml
-Copy code
+Real-Time Layer: Socket.IO for low-latency audio and caption streaming
+
+AI Services: Speech recognition and summarization using AI models
+
+Database: PostgreSQL with Prisma ORM for user, session, and transcript storage
 
 ---
 
@@ -105,8 +98,7 @@ backend/
 ├─ prisma/
 └─ server.js
 
-yaml
-Copy code
+
 
 ---
 
@@ -130,6 +122,8 @@ Copy code
 
 ---
 
+
+
 ## 🚀 Running the Project Locally
 
 ### 🔧 Backend Setup
@@ -139,15 +133,18 @@ cd backend
 npm install
 npm run dev
 
----
+``
+  
+```
 
----
+### 🔧 Frontend Setup
 
-
-🎨 Frontend Setup
+```bash
 cd frontend
 npm install
 npm run dev
+npm run dev
+
 
 🔑 Environment Variables
 
