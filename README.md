@@ -129,39 +129,24 @@ Copy code
 
 ---
 
+---
+
 ## 🚀 Running the Project Locally
 
-### Backend Setup
+### 🔧 Backend Setup
+
 ```bash
 cd backend
 npm install
 npm run dev
-Frontend Setup
-bash
-Copy code
+
+---
+
+## 🚀 Running the Project Locally
+
+### 🔧 Frontend Setup
+
+```bash
 cd frontend
 npm install
 npm run dev
-🔑 Environment Variables
-Create a .env file in the backend directory:
-
-env
-Copy code
-OPENAI_API_KEY=your_openai_api_key
-JWT_SECRET=your_jwt_secret
-FRONTEND_URL=http://localhost:5173
-📌 Future Enhancements
-Speaker diarization
-
-Video conferencing support
-
-Session recording & playback
-
-Advanced AI summarization
-
-Noise suppression
-
-Horizontal scaling with message queues
-
-👨‍💻 Author
-Rithik Sharma
