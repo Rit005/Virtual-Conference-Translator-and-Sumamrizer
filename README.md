@@ -4,32 +4,31 @@ A full-stack web application that enables **real-time virtual conferences** with
 
 ---
 
-## 🚀 Features
+## 🎯 Project Overview
 
-### 🔐 Authentication
-- Email & password login with JWT  
-- OAuth login using Google and GitHub  
-- Role-based access: **Viewer, Host, Moderator**  
-- Email verification for new users  
+The Virtual Conference Translator & Summarizer is designed to enhance online meetings by integrating real-time audio processing, AI transcription, and summarization into a unified platform. It supports role-based participation (host, moderator, viewer), secure authentication, and live WebSocket-based communication to deliver captions instantly as users speak.
 
-### 🎤 Live Audio Streaming
-- Browser microphone capture  
-- Real-time audio streaming via WebSockets  
-- PCM → WAV conversion for ASR processing  
+The platform focuses on accessibility, scalability, and real-time performance, making it suitable for online lectures, meetings, and webinars.
 
-### 📝 Live Captions
-- Real-time speech-to-text captions  
-- Multi-language support  
-- Low-latency updates  
+🚀 Key Features
 
-### 🤖 AI Summary
-- Auto-generated meeting summary  
-- Generated when the host ends a session  
-- Useful for meeting notes & records  
+🎤 Live Speech-to-Text Captions
+Real-time audio capture and transcription using AI-powered ASR services.
 
-### 💬 Chat & Q&A
-- Real-time chat during conferences  
-- Participant interaction and Q&A  
+🌍 Multilingual Translation Support
+On-the-fly language translation for captions to support global participants.
+
+📝 Automated Meeting Summaries
+AI-generated summaries created after session completion.
+
+🔐 Secure Authentication & Role Management
+JWT-based authentication with role-based access (Host, Moderator, Viewer).
+
+⚡ Real-Time Communication
+WebSocket-powered live sessions for captions, chat, and participant updates.
+
+📊 Session Management
+Create, join, and manage conference sessions with participant tracking.
 
 ---
 
