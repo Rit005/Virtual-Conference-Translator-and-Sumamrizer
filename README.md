@@ -82,7 +82,7 @@ Live Captions (Frontend)
         ↓
 Summary Generator
 
-🖥️ Technology Stack
+### 🖥️ Technology Stack
 Frontend
 
 React + Vite
