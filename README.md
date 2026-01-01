@@ -154,7 +154,9 @@ npm run dev
 Create a .env file in the backend directory:
 
 OPENAI_API_KEY=your_openai_api_key
+
 JWT_SECRET=your_jwt_secret
+
 FRONTEND_URL=http://localhost:5173
 
 
