@@ -34,47 +34,16 @@ Create, join, and manage conference sessions with participant tracking.
 
 ## 🏗️ System Architecture
 
-┌──────────────────────┐
-│   React Frontend     │
-│  (Live Captions UI, │
-│   Chat, Dashboard)  │
-└──────────┬───────────┘
-           │
-           │ REST APIs / WebSocket
-           ▼
-┌──────────────────────┐
-│  Express Backend API │
-│  - Auth (JWT)        │
-│  - Session Mgmt     │
-│  - WebSocket Server │
-└──────────┬───────────┘
-           │
-           │ Job Queue / Events
-           ▼
-┌──────────────────────┐
-│  Background Worker   │
-│  - Audio Processing  │
-│  - Transcription     │
-│  - Summarization     │
-└───────┬────────┬─────┘
-        │        │
-        │        │
-        ▼        ▼
-┌────────────┐  ┌────────────┐
-│ Whisper ASR│  │ Gemini API │
-│ Speech-to- │  │ Summary & │
-│ Text       │  │ Insights  │
-└────────────┘  └────────────┘
-        │
-        │ Store Results
-        ▼
-┌──────────────────────────┐
-│ PostgreSQL Database      │
-│ - Users                  │
-│ - Sessions               │
-│ - Transcripts            │
-│ - Summaries              │
-└──────────────────────────┘
+
+Frontend: React-based UI for live captions, chat, and session controls
+
+Backend: Node.js & Express API for authentication, session management, and AI orchestration
+
+Real-Time Layer: Socket.IO for low-latency audio and caption streaming
+
+AI Services: Speech recognition and summarization using AI models
+
+Database: PostgreSQL with Prisma ORM for user, session, and transcript storage
 
 ---
 
