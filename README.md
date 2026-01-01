@@ -158,4 +158,4 @@ Horizontal scaling with message queues
 
 👨‍💻 Author
 Rithik Sharma
-Full Stack Developer | AI & Web Enthusiast
+
