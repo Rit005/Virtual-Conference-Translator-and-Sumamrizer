@@ -1,297 +1,133 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { AUDIO_CONSTANTS, AUDIO_EVENTS } from '../utils/constants.js';
-import websocketService from '../services/websocketService.js';
+import websocketService from '../services/websocketService';
 import toast from 'react-hot-toast';
 
-/**
- * Real-time audio streaming hook
- * Streams mic audio → Socket.IO → Whisper → Translation → Live captions
- */
+const SAMPLE_RATE = 16000;
+const BUFFER_SIZE = 4096;
+
 const useAudioStreaming = ({
   sessionId,
   language = 'en',
-  chunkDuration = AUDIO_CONSTANTS.CHUNK_DURATION,
   onChunkSent,
   onError,
   onAudioLevel
 }) => {
-  /* ===================== STATE ===================== */
   const [isStreaming, setIsStreaming] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
-  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [error, setError] = useState(null);
 
-  /* ===================== REFS ===================== */
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const streamRef = useRef(null);
   const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const sourceRef = useRef(null);
-  const chunkIntervalRef = useRef(null);
-  const levelIntervalRef = useRef(null);
-  const recordingStartRef = useRef(null);
-
-  /* ===================== SUPPORT CHECK ===================== */
-  const isSupported = () =>
-    !!(
-      navigator.mediaDevices &&
-      navigator.mediaDevices.getUserMedia &&
-      window.MediaRecorder &&
-      window.AudioContext
-    );
+  const processorRef = useRef(null);
+  const streamRef = useRef(null);
 
   /* ===================== PERMISSION ===================== */
   const requestPermission = useCallback(async () => {
-    if (!isSupported()) {
-      toast.error('Browser does not support audio recording');
-      return false;
-    }
-
-    if (hasPermission && streamRef.current) {
-      return true;
-    }
-
     try {
-      setIsRequestingPermission(true);
-
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          channelCount: 1,
+          sampleRate: SAMPLE_RATE,
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: AUDIO_CONSTANTS.CHANNELS,
-          sampleRate: AUDIO_CONSTANTS.SAMPLE_RATE
+          autoGainControl: true
         }
       });
 
-      const audioContext = new AudioContext();
-      const analyser = audioContext.createAnalyser();
+      const audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
       const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
 
-      analyser.fftSize = 256;
-      source.connect(analyser);
+      source.connect(processor);
+      processor.connect(audioContext.destination);
 
-      streamRef.current = stream;
+      processor.onaudioprocess = (e) => {
+        if (!isStreaming) return;
+
+        const input = e.inputBuffer.getChannelData(0);
+
+        /* 🔊 AUDIO LEVEL */
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+        const rms = Math.sqrt(sum / input.length);
+        setAudioLevel(rms);
+        onAudioLevel?.(rms);
+
+        /* 🔥 SEND FLOAT32 PCM (BACKEND EXPECTS THIS) */
+        const float32Chunk = new Float32Array(input);
+
+        websocketService.sendAudioChunk(
+          sessionId,
+          float32Chunk,
+          language
+        );
+
+        onChunkSent?.({
+          size: float32Chunk.byteLength,
+          timestamp: Date.now()
+        });
+      };
+
       audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
-      sourceRef.current = source;
+      processorRef.current = processor;
+      streamRef.current = stream;
 
       setHasPermission(true);
-      toast.success('Microphone access granted');
-
-      websocketService.emit(AUDIO_EVENTS.PERMISSION_GRANTED, { sessionId });
-
+      toast.success('Microphone ready');
       return true;
     } catch (err) {
-      toast.error('Microphone access denied');
+      toast.error('Microphone permission denied');
       onError?.(err.message);
       return false;
-    } finally {
-      setIsRequestingPermission(false);
     }
-  }, [sessionId, hasPermission, onError]);
+  }, [sessionId, language, isStreaming]);
 
-  /* ===================== AUDIO LEVEL ===================== */
-  const updateAudioLevel = useCallback(() => {
-    if (!analyserRef.current) return;
-
-    const data = new Uint8Array(analyserRef.current.frequencyBinCount);
-    analyserRef.current.getByteFrequencyData(data);
-
-    const avg = data.reduce((a, b) => a + b, 0) / data.length;
-    const level = Math.min(avg / 255, 1);
-
-    setAudioLevel(level);
-    onAudioLevel?.(level);
-  }, [onAudioLevel]);
-
-  /* ===================== MEDIA RECORDER ===================== */
-  const setupRecorder = () => {
-    if (!streamRef.current) {
-      throw new Error('Microphone not initialized');
+  /* ===================== START ===================== */
+  const startStreaming = useCallback(() => {
+    if (!hasPermission || !sessionId) {
+      toast.error('Microphone or session missing');
+      return false;
     }
-
-    let mimeType = AUDIO_CONSTANTS.MIME_TYPE;
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'audio/webm';
-    }
-
-    const recorder = new MediaRecorder(streamRef.current, {
-      mimeType,
-      audioBitsPerSecond: AUDIO_CONSTANTS.BIT_RATE
-    });
-
-    audioChunksRef.current = [];
-
-    recorder.ondataavailable = (e) => {
-      if (e.data?.size) {
-        audioChunksRef.current.push(e.data);
-      }
-    };
-
-    recorder.onerror = (e) => {
-      toast.error('Recording error');
-      onError?.(e.error?.message);
-    };
-
-    recorder.onstop = () => {
-      setIsRecording(false);
-    };
-
-    mediaRecorderRef.current = recorder;
-    return recorder;
-  };
-
-  /* ===================== SEND CHUNK ===================== */
-  const sendAudioChunk = async (blob) => {
-    if (!blob || !blob.size) return;
-
-    const buffer = await blob.arrayBuffer();
-    websocketService.sendAudioChunk(
-      sessionId,
-      new Uint8Array(buffer),
-      language
-    );
-
-    onChunkSent?.({
-      size: blob.size,
-      timestamp: Date.now()
-    });
-  };
-
-  /* ===================== START STREAMING ===================== */
-  const startStreaming = useCallback(async () => {
-    if (isStreaming) return;
-
-    if (!sessionId) {
-      toast.error('Session not created');
-      return;
-    }
-
+  
     if (!websocketService.getConnectionStatus()) {
-      toast.error('WebSocket not connected');
-      return;
+      toast.error('WebSocket disconnected');
+      return false;
     }
-
-    if (!streamRef.current) {
-      toast.error('Enable microphone first');
-      return;
-    }
-
-    try {
-      const recorder = setupRecorder();
-
-      recorder.start(100);
-      setIsStreaming(true);
-      setIsRecording(true);
-      recordingStartRef.current = Date.now();
-
-      levelIntervalRef.current = setInterval(
-        updateAudioLevel,
-        AUDIO_CONSTANTS.AUDIO_LEVEL_UPDATE_INTERVAL
-      );
-
-      chunkIntervalRef.current = setInterval(async () => {
-        if (audioChunksRef.current.length) {
-          const blob = new Blob(audioChunksRef.current, {
-            type: recorder.mimeType
-          });
-          audioChunksRef.current = [];
-          await sendAudioChunk(blob);
-        }
-      }, chunkDuration);
-
-      websocketService.emit(AUDIO_EVENTS.RECORDING_STARTED, {
-        sessionId,
-        language
-      });
-
-      toast.success('Audio streaming started');
-    } catch (err) {
-      toast.error(err.message);
-      stopStreaming();
-    }
-  }, [sessionId, language, isStreaming, updateAudioLevel]);
-
-  /* ===================== STOP STREAMING ===================== */
+  
+    setIsStreaming(true);
+    toast.success('Live transcription started');
+    return true; 
+  }, [hasPermission, sessionId]);
+  
+  /* ===================== STOP ===================== */
   const stopStreaming = useCallback(() => {
-    if (!isStreaming) return;
+    setIsStreaming(false);
+    setAudioLevel(0);
+    toast.success('Streaming stopped');
+  }, []);
 
-    try {
-      mediaRecorderRef.current?.stop();
-
-      clearInterval(chunkIntervalRef.current);
-      clearInterval(levelIntervalRef.current);
-
-      chunkIntervalRef.current = null;
-      levelIntervalRef.current = null;
-
-      setIsStreaming(false);
-      setIsRecording(false);
-      setAudioLevel(0);
-      setRecordingTime(0);
-
-      websocketService.emit(AUDIO_EVENTS.RECORDING_STOPPED, { sessionId });
-      toast.success('Audio streaming stopped');
-    } catch (err) {
-      console.warn(err);
-    }
-  }, [isStreaming, sessionId]);
-
-  /* ===================== CLEANUP (SAFE) ===================== */
-  const cleanup = useCallback(() => {
-    if (isStreaming) {
-      stopStreaming();
-    }
-
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    audioContextRef.current?.close();
-
-    streamRef.current = null;
-    analyserRef.current = null;
-    sourceRef.current = null;
-    audioContextRef.current = null;
-  }, [isStreaming, stopStreaming]);
-
-  /* ===================== UNMOUNT ===================== */
+  /* ===================== CLEANUP ===================== */
   useEffect(() => {
     return () => {
-      cleanup();
+      processorRef.current?.disconnect();
+      audioContextRef.current?.close();
+      streamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
 
-  /* ===================== UTILS ===================== */
-  const formatRecordingTime = (ms) => {
-    const s = Math.floor(ms / 1000);
-    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  };
-
-  /* ===================== RETURN ===================== */
   return {
     isStreaming,
-    isRecording,
     hasPermission,
-    isRequestingPermission,
     audioLevel,
-    recordingTime,
-    error,
-
-    isSupported: isSupported(),
-    canStream:
-      hasPermission &&
-      !!sessionId &&
-      websocketService.getConnectionStatus(),
-
+  
+    
+    isReady: hasPermission,
+    isSupported: true,
+  
     requestPermission,
     startStreaming,
-    stopStreaming,
-    cleanup,
-    formatRecordingTime
+    stopStreaming
   };
+  
 };
 
 export default useAudioStreaming;

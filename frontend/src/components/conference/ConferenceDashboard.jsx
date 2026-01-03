@@ -162,22 +162,21 @@ const ConferenceDashboard = () => {
       setIsSessionStarted(true);
       
       // Start audio streaming
-      if (audioSupported && canStream) {
-        try {
-          const success = await startStreaming();
-          if (success) {
-            console.log('🎤 Audio streaming started for conference');
-          } else {
-            console.warn('⚠️ Failed to start audio streaming');
-          }
-        } catch (error) {
-          console.error('❌ Error starting audio streaming:', error);
-          toast.error('Failed to start audio streaming');
-        }
-      } else {
-        console.warn('⚠️ Audio streaming not supported or not ready');
-        toast.error('Audio streaming not supported or not ready');
+      if (!audioSupported) {
+        toast.error('Audio not supported in this browser');
+        return;
       }
+      
+      if (!hasPermission) {
+        toast.error('Please enable microphone first');
+        return;
+      }
+      
+      const success = await startStreaming();
+      if (!success) {
+        toast.error('Failed to start audio streaming');
+      }
+      
     }
   };
 
