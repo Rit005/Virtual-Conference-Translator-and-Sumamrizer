@@ -55,11 +55,11 @@ const useAudioStreaming = ({
         /* 🔥 SEND FLOAT32 PCM (BACKEND EXPECTS THIS) */
         const float32Chunk = new Float32Array(input);
 
-        websocketService.sendAudioChunk(
+        websocketService.sendAudioChunk({
           sessionId,
-          float32Chunk,
-          language
-        );
+          audio: float32Chunk,
+          
+      });
 
         onChunkSent?.({
           size: float32Chunk.byteLength,

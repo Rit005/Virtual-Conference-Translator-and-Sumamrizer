@@ -65,9 +65,16 @@ const WebSocketProvider = ({ children }) => {
   const connect = useCallback(
     (sessionId) => {
       if (!isAuthenticated || !user || !sessionId) return;
-
+  
       try {
         websocketService.connect(sessionId, user.id);
+  
+        
+        websocketService.emit('join_session', {
+          sessionId,
+          userId: user.id
+        });
+  
         setCurrentSession(sessionId);
       } catch (err) {
         console.error('WebSocket connect failed:', err);
@@ -76,6 +83,7 @@ const WebSocketProvider = ({ children }) => {
     },
     [isAuthenticated, user]
   );
+  
 
   /* ------------------------------------------------------------------ */
   /* ACTIONS                                                            */
@@ -191,6 +199,11 @@ const WebSocketProvider = ({ children }) => {
     setSummary(data);
   }, []);
 
+  const handleConnected = useCallback((data) => {
+    console.log('✅ Joined session:', data?.sessionId);
+    setIsConnected(true);
+  }, []);
+  
   const handleSessionStarted = useCallback(() => {
     toast.success('Conference started');
   }, []);
@@ -234,6 +247,7 @@ const WebSocketProvider = ({ children }) => {
     isMountedRef.current = true;
 
     websocketService.on('connectionStatus', handleConnectionStatus);
+    websocketService.on('connected', handleConnected);
     websocketService.on('liveCaption', handleCaption);
     websocketService.on('caption:translated', handleTranslatedCaption);
     websocketService.on('chatMessage', handleChatMessage);
@@ -249,6 +263,7 @@ const WebSocketProvider = ({ children }) => {
       isMountedRef.current = false;
 
       websocketService.off('connectionStatus', handleConnectionStatus);
+      websocketService.on('connected', handleConnected);
       websocketService.off('liveCaption', handleCaption);
       websocketService.off('caption:translated', handleTranslatedCaption);
       websocketService.off('chatMessage', handleChatMessage);
