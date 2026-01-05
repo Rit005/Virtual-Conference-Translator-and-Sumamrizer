@@ -33,7 +33,13 @@ export default class SocketHandler {
 
       /* ================= AUDIO STREAM ================= */
       socket.on("audio_chunk", async ({ sessionId, audio }) => {
+        console.log("🎧 Audio chunk received", {
+          sessionId,
+          length: audio?.length
+        });
+
         try {
+          const audioBuffer = float32Chunk.buffer;
           const result = await this.transcriptionAgent.transcribe(audio);
 
           if (!result || !result.text) return;
@@ -47,7 +53,7 @@ export default class SocketHandler {
           this.sessionCaptions.get(sessionId)?.push(caption.text);
 
           // 📢 send caption to all in session
-          this.io.to(sessionId).emit("liveCaption", caption);
+          this.io.to(sessionId).emit("caption:update", caption);
         } catch (err) {
           console.error("❌ Transcription error:", err.message);
         }

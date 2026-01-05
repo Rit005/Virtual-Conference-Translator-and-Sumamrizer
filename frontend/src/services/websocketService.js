@@ -175,11 +175,17 @@ class WebSocketService {
   /* ACTIONS                                                            */
   /* ------------------------------------------------------------------ */
 
-  sendAudioChunk(payload) {
+
+  sendAudioChunk(sessionId, audio) {
     if (!this.socket || !this.isConnected) return;
   
-    this.socket.emit('audio_chunk', payload);
+    this.socket.emit("audio_chunk", {
+      sessionId,
+      audio
+    });
   }
+  
+  
   sendChatMessage(text, userId, sessionId) {
     if (this.socket && this.isConnected && this.currentSessionId === sessionId) {
       this.socket.emit('chat_message', { sessionId, text });

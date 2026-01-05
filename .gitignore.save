@@ -1,0 +1,6 @@
+code .gitignore
+
+cd /Users/rithiksharma/Downloads/Virtual\ confernce\ translator\ and\ summarizer/frontend && npm run dev
+
+echo "All errors have been successfully resolved! The application should now run without the ListenerManager constructor error and backend import issues."
+
