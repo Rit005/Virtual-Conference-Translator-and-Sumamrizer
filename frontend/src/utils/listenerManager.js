@@ -5,12 +5,12 @@
 
 class ListenerManager {
   constructor() {
-    this.listeners = new Map();           
-    this.socketListeners = new Map();   
-    this.listenerIds = new Map();          
-    this.eventSources = new Map();         
-    this.cleanupCallbacks = new Map();     
-    this.componentListeners = new Map();   
+    this.listeners = new Map();           // event -> Set(callback)
+    this.socketListeners = new Map();
+    this.listenerIds = new Map();          // callback -> id
+    this.eventSources = new Map();         // id -> metadata
+    this.cleanupCallbacks = new Map();
+    this.componentListeners = new Map();
 
     this.nextListenerId = 0;
 
@@ -19,9 +19,7 @@ class ListenerManager {
       duplicatePrevented: 0,
       cleanedUp: 0,
       socketListeners: 0,
-      componentListeners: 0,
-      successCount: 0,
-      errorCount: 0
+      componentListeners: 0
     };
 
     this.debugMode = process.env.NODE_ENV === 'development';
@@ -32,7 +30,7 @@ class ListenerManager {
   /* ------------------------------------------------------------------ */
 
   addListener(event, callback, source = 'custom', options = {}) {
-    if (this.hasExactDuplicate(event, callback)) {
+    if (this.listeners.get(event)?.has(callback)) {
       this.stats.duplicatePrevented++;
       return null;
     }
@@ -53,50 +51,11 @@ class ListenerManager {
     }
     this.listeners.get(event).add(callback);
 
-    if (source === 'websocket') {
-      if (!this.socketListeners.has(event)) {
-        this.socketListeners.set(event, new Set());
-      }
-      this.socketListeners.get(event).add(callback);
-      this.stats.socketListeners++;
-    } else {
-      this.stats.componentListeners++;
-    }
-
     this.stats.totalListeners++;
 
     if (this.debugMode) {
-      console.log(`✅ Listener added: ${event}`, { listenerId, source });
+      console.log(`✅ Listener added: ${event}`, listenerId);
     }
-
-    return listenerId;
-  }
-
-  addSocketListener(socket, event, callback, options = {}) {
-    const listenerId = this.addListener(event, callback, 'websocket', options);
-    if (!listenerId || !socket) return null;
-
-    socket.on(event, callback);
-
-    this.cleanupCallbacks.set(listenerId, () => {
-      try {
-        socket.off(event, callback);
-      } catch {}
-    });
-
-    return listenerId;
-  }
-
-  addComponentListener(componentId, event, callback, cleanup = null) {
-    const listenerId = this.addListener(event, callback, 'react');
-    if (!listenerId) return null;
-
-    if (!this.componentListeners.has(componentId)) {
-      this.componentListeners.set(componentId, new Set());
-    }
-    this.componentListeners.get(componentId).add(listenerId);
-
-    if (cleanup) this.cleanupCallbacks.set(listenerId, cleanup);
 
     return listenerId;
   }
@@ -106,60 +65,51 @@ class ListenerManager {
   /* ------------------------------------------------------------------ */
 
   removeListener(event, callback) {
+    if (!this.listeners.has(event)) return false;
+
     const listenerId = this.listenerIds.get(callback);
     if (!listenerId) return false;
 
-    this.listeners.get(event)?.delete(callback);
-    this.socketListeners.get(event)?.delete(callback);
-
+    this.listeners.get(event).delete(callback);
     this.listenerIds.delete(callback);
     this.eventSources.delete(listenerId);
 
     const cleanup = this.cleanupCallbacks.get(listenerId);
     if (cleanup) cleanup();
+
     this.cleanupCallbacks.delete(listenerId);
-
-    for (const [compId, ids] of this.componentListeners.entries()) {
-      if (ids.has(listenerId)) {
-        ids.delete(listenerId);
-        if (ids.size === 0) this.componentListeners.delete(compId);
-      }
-    }
-
-    this.stats.totalListeners--;
     this.stats.cleanedUp++;
+    this.stats.totalListeners--;
 
     return true;
   }
 
+  removeListenerByCallback(event, callback) {
+    return this.removeListener(event, callback);
+  }
+
   removeListenerById(listenerId) {
-    for (const [callback, id] of this.listenerIds.entries()) {
+    for (const [cb, id] of this.listenerIds.entries()) {
       if (id === listenerId) {
         const info = this.eventSources.get(listenerId);
-        return this.removeListener(info.event, callback);
+        return this.removeListener(info.event, cb);
       }
     }
     return false;
   }
 
   removeAllListeners() {
-    let removed = 0;
-    for (const event of this.listeners.keys()) {
-      for (const cb of Array.from(this.listeners.get(event))) {
-        if (this.removeListener(event, cb)) removed++;
+    for (const [event, callbacks] of this.listeners.entries()) {
+      for (const cb of callbacks) {
+        this.removeListener(event, cb);
       }
     }
-    return removed;
   }
 
   /* ------------------------------------------------------------------ */
-  /* REQUIRED FIX — getListeners()                                       */
+  /* REQUIRED BY WebSocketService.emit()                                 */
   /* ------------------------------------------------------------------ */
 
-  /**
-   * 🔥 REQUIRED by WebSocketService.emit()
-   * This FIXES: "getListeners is not a function"
-   */
   getListeners(event) {
     const callbacks = this.listeners.get(event);
     if (!callbacks) return [];
@@ -172,35 +122,18 @@ class ListenerManager {
         id,
         event,
         callback,
-        source: info?.source || 'unknown',
-        functionName: callback.name || 'anonymous',
-        addedAt: info?.addedAt,
-        options: info?.options
+        source: info?.source || 'unknown'
       };
     });
   }
 
   /* ------------------------------------------------------------------ */
-  /* HELPERS                                                             */
+  /* CLEANUP                                                             */
   /* ------------------------------------------------------------------ */
-
-  hasExactDuplicate(event, callback) {
-    return this.listeners.get(event)?.has(callback) || false;
-  }
-
-  getStats() {
-    return {
-      ...this.stats,
-      activeEvents: this.listeners.size,
-      socketEvents: this.socketListeners.size,
-      components: this.componentListeners.size
-    };
-  }
 
   cleanup() {
     this.removeAllListeners();
     this.listeners.clear();
-    this.socketListeners.clear();
     this.listenerIds.clear();
     this.eventSources.clear();
     this.cleanupCallbacks.clear();

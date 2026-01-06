@@ -23,41 +23,45 @@ export default class SocketHandler {
 
       /* ================= JOIN SESSION ================= */
       socket.on("join_session", ({ sessionId }) => {
+        console.log("📥 JOIN SESSION RECEIVED:", sessionId);
+      
         socket.join(sessionId);
-        console.log(`📥 Socket ${socket.id} joined session ${sessionId}`);
-
+      
         if (!this.sessionCaptions.has(sessionId)) {
           this.sessionCaptions.set(sessionId, []);
         }
       });
+      
 
       /* ================= AUDIO STREAM ================= */
       socket.on("audio_chunk", async ({ sessionId, audio }) => {
-        console.log("🎧 Audio chunk received", {
-          sessionId,
-          length: audio?.length
-        });
-
         try {
-          const audioBuffer = float32Chunk.buffer;
-          const result = await this.transcriptionAgent.transcribe(audio);
-
+          console.log(
+            "🎧 AUDIO RECEIVED",
+            sessionId,
+            audio?.byteLength
+          );
+      
+          // ✅ rebuild Float32Array from ArrayBuffer
+          const float32Audio = new Float32Array(audio);
+      
+          const result = await this.transcriptionAgent.transcribe(float32Audio);
+      
           if (!result || !result.text) return;
-
+      
           const caption = {
             text: result.text,
             timestamp: Date.now()
           };
-
-          // 🧠 store caption
+      
           this.sessionCaptions.get(sessionId)?.push(caption.text);
-
-          // 📢 send caption to all in session
-          this.io.to(sessionId).emit("caption:update", caption);
+      
+          this.io.to(sessionId).emit("liveCaption", caption);
         } catch (err) {
           console.error("❌ Transcription error:", err.message);
         }
       });
+      
 
       /* ================= GENERATE SUMMARY ================= */
       socket.on("generate_summary", ({ sessionId }) => {

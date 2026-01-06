@@ -41,31 +41,40 @@ const useAudioStreaming = ({
       processor.connect(audioContext.destination);
 
       processor.onaudioprocess = (e) => {
+        console.log(" MIC CALLBACK FIRED");
+      
         if (!isStreaming) return;
-
+      
         const input = e.inputBuffer.getChannelData(0);
-
+        console.log(" MIC INPUT SAMPLE", input[0]);
+      
         /* 🔊 AUDIO LEVEL */
         let sum = 0;
         for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
         const rms = Math.sqrt(sum / input.length);
         setAudioLevel(rms);
         onAudioLevel?.(rms);
-
-        /* 🔥 SEND FLOAT32 PCM (BACKEND EXPECTS THIS) */
+      
+        /* 🔥 SEND FLOAT32 PCM */
         const float32Chunk = new Float32Array(input);
-        const audioBuffer = float32Chunk.buffer;
-          websocketService.sendAudioChunk({
+      
+        console.log(
+          "📤 FRONTEND AUDIO SENT",
           sessionId,
-          audio: float32Chunk,
-          
-      });
-
+          float32Chunk.byteLength
+        );
+      
+        websocketService.sendAudioChunk({
+          sessionId,
+          audio: float32Chunk.buffer
+        });
+      
         onChunkSent?.({
           size: float32Chunk.byteLength,
           timestamp: Date.now()
         });
       };
+      
 
       audioContextRef.current = audioContext;
       processorRef.current = processor;
